@@ -308,6 +308,8 @@ def install_patches(classes, stream=None):
 def patch_wait_return():
     # After the live loop ends, the CLI command would block in wait_return()
     # until a signal arrives; once engaged, let it return immediately instead.
+    # pymobiledevice3 11.50 made wait_return() async and awaits it, so the
+    # replacement has to be async whenever the original is.
     try:
         from pymobiledevice3.osu.os_utils import get_os_utils
         utils_type = type(get_os_utils())
@@ -319,10 +321,16 @@ def patch_wait_return():
         if original is None:
             continue
 
-        def wait_return(self, *args, _original=original, **kwargs):
-            if STATE.engaged:
-                return None
-            return _original(self, *args, **kwargs)
+        if inspect.iscoroutinefunction(original):
+            async def wait_return(self, *args, _original=original, **kwargs):
+                if STATE.engaged:
+                    return None
+                return await _original(self, *args, **kwargs)
+        else:
+            def wait_return(self, *args, _original=original, **kwargs):
+                if STATE.engaged:
+                    return None
+                return _original(self, *args, **kwargs)
 
         setattr(klass, "wait_return", wait_return)
         patched = True
