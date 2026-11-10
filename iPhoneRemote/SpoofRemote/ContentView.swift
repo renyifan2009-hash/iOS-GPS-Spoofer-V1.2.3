@@ -22,6 +22,7 @@ struct ContentView: View {
     @Environment(RouteLibrary.self) private var routeLibrary
     @Environment(OnDeviceController.self) private var phone
     @Environment(UpdateChecker.self) private var updates
+    @Environment(LicenseStore.self) private var licenses
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -31,6 +32,11 @@ struct ContentView: View {
     @State private var showSearch = false
     @State private var showPairing = false
     @State private var showPhoneSetup = false
+    @State private var showSettings = false
+    @State private var showPaywall = false
+    /// A pairing file that came in an `anywhere://pairingfile` link, waiting for the person to say yes.
+    /// Any page or app can open such a link, so it never replaces the working file on its own.
+    @State private var offeredPairing: Data?
     @State private var pairAfterIntro = false
     @State private var route = RouteDraft()
     @State private var joystick = JoystickModel()
@@ -75,7 +81,29 @@ struct ContentView: View {
         .sheet(isPresented: $showPhoneSetup) {
             PhoneOnlySetupView()
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+        }
+        .alert(phone.isSetUp ? "Replace the pairing file?" : "Use this pairing file?",
+               isPresented: Binding(get: { offeredPairing != nil }, set: { if !$0 { offeredPairing = nil } })) {
+            Button(phone.isSetUp ? "Replace" : "Use It", role: phone.isSetUp ? .destructive : nil) {
+                if let data = offeredPairing { importOfferedPairing(data) }
+                offeredPairing = nil
+            }
+            Button("Cancel", role: .cancel) { offeredPairing = nil }
+        } message: {
+            Text(phone.isSetUp
+                 ? "A link is offering a new pairing file. Only say yes if you just asked SideStore for it: it replaces the one that works now."
+                 : "A link is offering this iPhone's pairing file. Only say yes if you just asked SideStore for it.")
+        }
         .onOpenURL { url in
+            if url.scheme == "anywhere" {
+                handleAppLink(url)
+                return
+            }
             // A pairing file opened from AirDrop, Files or Mail.
             if phone.importPairingFile(from: url) {
                 // Someone who brings a pairing file has no need for the intro.
@@ -100,6 +128,13 @@ struct ContentView: View {
         }
         .onAppear {
             if phoneMotion == nil { phoneMotion = PhoneMotionController(phone: phone) }
+            // Lost while locked: a notification. Lost on screen: LocalDevVPN, which is the usual fix.
+            phone.onConnectionLost = {
+                LocalAlerts.connectionLost()
+                LocalDevVPN.turnOnIfNeeded()
+            }
+            LocalAlerts.scheduleSigningReminder(expiry: SigningStatus.expiry)
+            Task { await licenses.refreshIfDue() }
             // (A pairing file that was opened first has already shown the setup screen.)
             if !hasSeenIntro, !showPhoneSetup { showIntro = true }
             // Looking for Macs makes iOS ask for Local Network access. Not before
@@ -133,6 +168,22 @@ struct ContentView: View {
             switch UserDefaults.standard.string(forKey: "SpoofRemoteShow") {
             case "phoneSetup":
                 showPhoneSetup = true
+            case "phoneDemo":
+                // The iPhone-only card with a demo pairing file and a pin at Apple Park (nothing starts).
+                phone.useDemoPairing()
+                source = .thisPhone
+                let place = Place(name: "Apple Park", subtitle: "Cupertino, CA", latitude: 37.3349, longitude: -122.0090)
+                locations.select(place, moveCamera: false)
+                locations.focus(on: place.coordinate, meters: 2200)
+                if macMode == .route {
+                    route.add(place.coordinate)
+                    route.add(CLLocationCoordinate2D(latitude: 37.3318, longitude: -122.0312))
+                    route.add(CLLocationCoordinate2D(latitude: 37.3230, longitude: -122.0322))
+                }
+            case "settings":
+                showSettings = true
+            case "paywall":
+                showPaywall = true
             case "applePark":
                 // Just the map, at Apple Park with a pin (for screenshots): nothing is started.
                 let place = Place(name: "Apple Park", subtitle: "Cupertino, CA", latitude: 37.3349, longitude: -122.0090)
@@ -149,8 +200,9 @@ struct ContentView: View {
             #endif
         }
         .task(id: source) {
-            // Is LocalDevVPN on? The status pill says so before you tap Start.
-            if source == .thisPhone, phone.isSetUp, !phone.isSpoofing { await phone.checkLoopback() }
+            // Is LocalDevVPN on? The status pill says so before you tap Start, and if it's off it is
+            // opened by itself (it comes straight back here).
+            await checkVPN()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { phoneMotion?.releaseJoystick() }
@@ -161,8 +213,10 @@ struct ContentView: View {
                 if connection.isPaired || showPairing { connection.startBrowsing() }
                 connection.startPolling()
                 updates.checkIfDue()
-                if source == .thisPhone, phone.isSetUp, !phone.isSpoofing {
-                    Task { await phone.checkLoopback() }
+                if source == .thisPhone, phone.isSetUp {
+                    // Back on screen while holding: check the connection now rather than at the next beat.
+                    if phone.isSpoofing { phone.refreshNow() }
+                    Task { await checkVPN() }
                 }
             case .background:
                 connection.stopPolling()
@@ -184,6 +238,56 @@ struct ContentView: View {
         }
         .onChange(of: connection.status?.activity) { _, activity in followMacActivity(activity) }
         .onChange(of: simulatedSpot) { _, _ in keepSimulatedLocationInView() }
+    }
+
+    // MARK: - Links, LocalDevVPN and Pro
+
+    /// `anywhere://` links: LocalDevVPN coming back, a license from the payment page, or a pairing file
+    /// from SideStore.
+    private func handleAppLink(_ url: URL) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+        switch url.host?.lowercased() {
+        case "activate":
+            if let key = value("key") { Task { if await licenses.activate(key: key) { showPaywall = false } } }
+        case "pairingfile":
+            // SideStore's answer to "sidestore://pairing?urlname=anywhere". Asked about first.
+            guard let text = value("data"), let data = Data(base64Encoded: text), data.count < 1_000_000 else { return }
+            offeredPairing = data
+        default:
+            // Back from LocalDevVPN: is the connection there now?
+            Task { await checkVPN(openIfOff: false) }
+        }
+    }
+
+    private func importOfferedPairing(_ data: Data) {
+        let file = FileManager.default.temporaryDirectory.appending(path: "SideStore.mobiledevicepairing")
+        guard (try? data.write(to: file, options: .completeFileProtection)) != nil else { return }
+        defer { try? FileManager.default.removeItem(at: file) }
+        if phone.importPairingFile(from: file) {
+            hasSeenIntro = true
+            if !isSpoofing { source = .thisPhone }
+        }
+        presentPhoneSetup()
+    }
+
+    /// Is LocalDevVPN on? If not, and the setting allows, open it: it turns on and comes back.
+    private func checkVPN(openIfOff: Bool = true) async {
+        guard source == .thisPhone, phone.isSetUp else { return }
+        if phone.isReconnecting {
+            if openIfOff { LocalDevVPN.turnOnIfNeeded() }
+            return
+        }
+        guard !phone.isSpoofing, !phone.isWorking else { return }
+        await phone.checkLoopback()
+        if openIfOff, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
+    }
+
+    /// Starting a location on this iPhone needs Pro (or the trial) once payments are set up.
+    private func requirePro() -> Bool {
+        if licenses.canUseEverything { return true }
+        showPaywall = true
+        return false
     }
 
     // MARK: - Following the Mac
@@ -295,7 +399,8 @@ struct ContentView: View {
                     UserAnnotation()
                 }
             }
-            .mapStyle(.standard(elevation: .realistic))
+            // Muted: the map's softer colours suit the app's and keep the pins easy to see.
+            .mapStyle(.standard(elevation: .realistic, emphasis: .muted))
             .mapControls {
                 MapCompass()
                 MapScaleView()
@@ -323,36 +428,50 @@ struct ContentView: View {
 
     // MARK: - Top bar
 
+    /// A search bar across the top, like Maps, with Settings beside it. Under it, on the left, what's
+    /// happening; on the right, the button that shows where iOS thinks this iPhone is.
     private var topBar: some View {
-        // With very large text the status pill needs the whole width, so the
-        // two round buttons go under it instead of squeezing it.
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
-            : AnyLayout(HStackLayout(spacing: 10))
-        return layout {
-            Button {
-                if source == .thisPhone { showPhoneSetup = true } else { showPairing = true }
-            } label: {
-                if source == .thisPhone {
-                    PhonePill(phone: phone)
-                } else {
-                    StatusPill(connection: connection)
-                }
-            }
-            .buttonStyle(.plain)
-            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
-            GlassGroup(spacing: 8) {
-                HStack(spacing: 8) {
-                    CircleButton(symbol: locations.showsReportedLocation ? "location.fill" : "location",
-                                 label: "Show where iOS says this iPhone is",
-                                 isOn: locations.showsReportedLocation,
-                                 tint: locations.showsReportedLocation ? Brand.sky : nil) {
-                        withAnimation(Brand.snappy) { locations.toggleReportedLocation() }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    showSearch = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Search for a place")
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
                     }
-                    CircleButton(symbol: "magnifyingglass", label: "Search for a place") { showSearch = true }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 48)
+                    .glassCapsule(interactive: true)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search for a place")
+                CircleButton(symbol: "gearshape", label: "Settings") { showSettings = true }
+            }
+            HStack(alignment: .top, spacing: 10) {
+                Button {
+                    if source == .thisPhone { showPhoneSetup = true } else { showPairing = true }
+                } label: {
+                    if source == .thisPhone {
+                        PhonePill(phone: phone)
+                    } else {
+                        StatusPill(connection: connection)
+                    }
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 8)
+                CircleButton(symbol: locations.showsReportedLocation ? "location.fill" : "location",
+                             label: "Show where iOS says this iPhone is",
+                             isOn: locations.showsReportedLocation,
+                             tint: locations.showsReportedLocation ? Brand.sky : nil) {
+                    withAnimation(Brand.snappy) { locations.toggleReportedLocation() }
                 }
             }
-            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .trailing)
         }
         .padding(.top, 6)
     }
@@ -363,6 +482,9 @@ struct ContentView: View {
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             otherSourceHoldingNotice
+            if SigningStatus.isEndingSoon {
+                signingNotice.transition(.rise)
+            }
             UpdateNoticeView()
             if source == .thisPhone {
                 phoneCard
@@ -375,7 +497,6 @@ struct ContentView: View {
 
     private func bottomCard(maxHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            sourcePicker
             // The part under the picker is exactly as tall as what is in it, up to the limit, and scrolls
             // past that. (A small iPhone, or large text, would otherwise push the buttons off the
             // bottom. A flexible frame here stretched the card to the limit even when it was nearly
@@ -384,7 +505,7 @@ struct ContentView: View {
                 .scrollBounceBehavior(.basedOnSize)
                 // Capped, then sized to what is in it: `frame(maxHeight:)` before `fixedSize` gives the
                 // content's height up to the cap, and the scroll view scrolls only past it.
-                .frame(maxHeight: max(160, maxHeight - 96 - (hasPinnedAction ? 70 : 0)))
+                .frame(maxHeight: max(160, maxHeight - 50 - (hasPinnedAction ? 70 : 0)))
                 .fixedSize(horizontal: false, vertical: true)
             // The main button stays put at the bottom, however much is above it to scroll.
             pinnedAction
@@ -464,17 +585,6 @@ struct ContentView: View {
             }
         }
         .disabled(connection.isWorking)
-    }
-
-    private var sourcePicker: some View {
-        Picker("Change the location from", selection: $source) {
-            Text("Mac").tag(LocationSource.mac)
-            Text("This iPhone").tag(LocationSource.thisPhone)
-        }
-        .pickerStyle(.segmented)
-        // One at a time: stop the current location before switching. (And not
-        // in the middle of a start or stop either.)
-        .disabled(isSpoofing || phone.isWorking || connection.isWorking || phoneMotion?.isWorking == true)
     }
 
     /// The picker is locked while a location is held. When it is the other
@@ -566,10 +676,7 @@ struct ContentView: View {
                     .transition(.rise)
             }
             if let error = connection.lastError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(Brand.warningText)
-                    .fixedSize(horizontal: false, vertical: true)
+                ErrorNotice(message: error)
                     .transition(.rise)
             } else if case .offline(let reason) = connection.link {
                 // The pill only says "offline". This says why, and what to try.
@@ -658,10 +765,11 @@ struct ContentView: View {
                         RouteProgressCardView(route: route, connection: motion)
                     } else {
                         RouteCardView(route: route, connection: motion, library: routeLibrary)
-                        Text("This iPhone follows the route at the selected speed, with waits at your stops.")
+                        Text(route.natural ? "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
+                               : "This iPhone follows the route at the selected speed, with waits at your stops.")
                             .font(.footnote).foregroundStyle(.secondary)
                         Button {
-                            guard let request = route.request() else { return }
+                            guard requirePro(), let request = route.request() else { return }
                             let snapshot = route.snapshot(named: route.name ?? "iPhone route")
                             Task { if await motion.driveRoute(request) { routeLibrary.recordRecent(snapshot) } }
                         } label: { Label("Drive Route", systemImage: "play.fill").frame(maxWidth: .infinity) }
@@ -677,47 +785,42 @@ struct ContentView: View {
                         Button("Stop") { Task { _ = await motion.stop() } }.prominentButton(tint: Brand.danger)
                     } else {
                         Button {
-                            guard let place = locations.selection else { return }
+                            guard requirePro(), let place = locations.selection else { return }
                             Task { _ = await motion.start(at: place.coordinate, name: place.name, joystick: true) }
                         } label: { Label("Start Joystick", systemImage: "gamecontroller.fill").frame(maxWidth: .infinity) }
                         .prominentButton()
                         .disabled(locations.selection == nil || motion.isWorking)
                     }
                 }
-                if let error = motion.lastError {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote).foregroundStyle(Brand.warningText)
+                if let error = motion.lastError, !phone.isReconnecting, phone.lastError == nil {
+                    ErrorNotice(message: error)
                 }
             }
-            if let error = phone.lastError {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(Brand.warningText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let detail = phone.lastErrorDetail {
-                        // For a bug report: which step failed, and how. The
-                        // setup screen shows it too.
-                        Text(detail)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
-                    if updates.updateAvailable {
-                        // Updating is a likely fix when connecting fails.
-                        Button {
-                            openURL(updates.releaseURL)
-                        } label: {
-                            Label("A newer version may fix this. Get it.", systemImage: "arrow.down.circle.fill")
-                                .font(.caption.weight(.semibold))
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Brand.skyText)
-                    }
-                }
-                .transition(.rise)
+            if phone.isReconnecting {
+                ReconnectingNotice()
+                    .transition(.rise)
+            } else if let error = phone.lastError {
+                ErrorNotice(message: error, detail: phone.lastErrorDetail,
+                            action: updates.updateAvailable ? ("Get the newer version", { openURL(updates.releaseURL) }) : nil)
+                    .transition(.rise)
             }
+        }
+    }
+
+    /// The app's signing (7 days with a free Apple ID) runs out within two days.
+    private var signingNotice: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .foregroundStyle(Brand.warningText)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Refresh AnyWhere soon").font(.subheadline.weight(.semibold))
+                Text(SigningStatus.summary ?? "").font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            Button("SideStore") { SideStore.open() }
+                .font(.subheadline.weight(.semibold))
+                .glassButton()
+                .fixedSize()
         }
     }
 
@@ -751,6 +854,10 @@ struct ContentView: View {
             }
             .prominentButton()
             .disabled(!OnDeviceController.isSupported)
+            Button("Use a Mac instead") { withAnimation(Brand.spring) { source = .mac } }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Brand.accentText)
+                .frame(maxWidth: .infinity)
         }
     }
 
@@ -799,6 +906,8 @@ struct ContentView: View {
     }
 
     private func setPhone(_ place: Place) {
+        guard requirePro() else { return }
+        LocalAlerts.requestPermission()
         Task {
             if let motion = phoneMotion, await motion.start(at: place.coordinate, name: place.name) {
                 locations.recordRecent(place)
@@ -807,7 +916,8 @@ struct ContentView: View {
     }
 
     private func phoneIsAt(_ place: Place) -> Bool {
-        guard let current = phone.current else { return false }
+        // The exact place held: with the natural GPS on, `phone.current` wanders a few metres round it.
+        guard let current = phoneMotion?.anchor ?? phone.current else { return false }
         return abs(current.latitude - place.latitude) < 1e-5 && abs(current.longitude - place.longitude) < 1e-5
     }
 
@@ -838,13 +948,17 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .prominentButton()
+            Button("Use this iPhone on its own") { withAnimation(Brand.spring) { source = .thisPhone } }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Brand.accentText)
+                .frame(maxWidth: .infinity)
         }
     }
 
     private func selectionRow(_ place: Place) -> some View {
         let favorite = locations.isFavorite(place)
         return HStack(spacing: 12) {
-            IconTile(symbol: "mappin", colors: [Color(red: 0.99, green: 0.42, blue: 0.42), Color(red: 0.86, green: 0.15, blue: 0.27)],
+            IconTile(symbol: "mappin", colors: Brand.pin,
                      size: 42)
             VStack(alignment: .leading, spacing: 2) {
                 Text(place.name)
@@ -972,6 +1086,7 @@ private struct PhonePill: View {
     private var display: (text: String, color: Color, live: Bool) {
         guard OnDeviceController.isSupported else { return ("This iPhone · Needs iOS 17", Brand.warning, false) }
         guard phone.isSetUp else { return ("This iPhone · Tap to set up", .gray, false) }
+        if phone.isReconnecting { return ("Reconnecting · This iPhone", Brand.warning, false) }
         switch phone.phase {
         case .active: return ("Simulating · This iPhone", Brand.live, true)
         case .connecting: return ("Connecting · This iPhone", Brand.sky, false)
@@ -1138,7 +1253,7 @@ private struct SelectionPin: View {
     var body: some View {
         ZStack(alignment: .top) {
             PinShape()
-                .fill(LinearGradient(colors: [Color(red: 0.99, green: 0.42, blue: 0.42), Color(red: 0.86, green: 0.15, blue: 0.27)],
+                .fill(LinearGradient(colors: Brand.pin,
                                      startPoint: .top, endPoint: .bottom))
                 .overlay(PinShape().stroke(.white, lineWidth: 2.5))
                 .frame(width: 34, height: 44)

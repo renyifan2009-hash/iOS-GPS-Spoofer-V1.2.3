@@ -228,17 +228,58 @@ final class StandaloneControlTests: XCTestCase {
         XCTAssertEqual(engine.count, stoppedCount)
     }
 
-    func testHoldHeartbeatReplacesStaleActiveStateWithFailure() async throws {
+    func testHeldLocationReconnectsInsteadOfQuittingWhenTheLinkDrops() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
                                        developerPortProbe: { DeveloperPorts(lockdown: true) },
-                                       heartbeatInterval: .milliseconds(30))
+                                       heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
+        var lost = 0
+        phone.onConnectionLost = { lost += 1 }
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         XCTAssertTrue(started)
         engine.failSet = true
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(phone.isSpoofing, "the session is kept while the link is down")
+        XCTAssertTrue(phone.isReconnecting)
+        XCTAssertEqual(lost, 1, "told once per outage")
+        engine.failSet = false
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(phone.isSpoofing)
+        XCTAssertFalse(phone.isReconnecting)
+        XCTAssertNil(phone.lastError)
+        await phone.stop()
+    }
+
+    func testReconnectingGivesUpAfterItsWindow() async throws {
+        let engine = FakeDevice()
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10),
+                                       reconnectWindow: .milliseconds(120))
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
+        XCTAssertTrue(started)
+        engine.failSet = true
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertFalse(phone.isSpoofing)
-        XCTAssertTrue(phone.lastError?.contains("Fake disconnected device") == true)
+        XCTAssertFalse(phone.isReconnecting)
+        XCTAssertTrue(phone.lastErrorDetail?.contains("Fake disconnected device") == true)
+    }
+
+    func testStopWhileReconnectingEndsIt() async throws {
+        let engine = FakeDevice()
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
+        _ = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
+        engine.failSet = true
+        while !phone.isReconnecting { try await Task.sleep(for: .milliseconds(10)) }
+        await phone.stop()
+        XCTAssertFalse(phone.isSpoofing)
+        XCTAssertFalse(phone.isReconnecting)
+        engine.failSet = false
+        let count = engine.count
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(engine.count, count, "nothing is set again after Stop")
     }
 
     func testPhoneTimerStopsWithoutAnyMacController() async throws {

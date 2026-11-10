@@ -145,8 +145,8 @@ private struct WelcomePage: View {
                 Text("Anywhere.")
                     .font(.system(size: 40, weight: .heavy, design: .rounded))
                     .foregroundStyle(LinearGradient(
-                        colors: [Color(red: 0.53, green: 0.94, blue: 0.67), Color(red: 0.65, green: 0.71, blue: 0.99),
-                                 Color(red: 0.49, green: 0.83, blue: 0.99)],
+                        colors: [Brand.live, Brand.violet,
+                                 Brand.sky],
                         startPoint: .leading, endPoint: .trailing))
                     .reveal(shown, order: 4)
                 Text("Pick a place on this phone. Your Mac, or this iPhone on its own, moves its location there. Stop, and the real GPS comes straight back.")
@@ -193,10 +193,10 @@ private struct HowItWorksPage: View {
                 FeatureRow(symbol: "magnifyingglass", colors: [Brand.indigo, Brand.sky],
                            title: "Search or tap the map", text: "Addresses, landmarks or exact coordinates.")
                     .reveal(shown, order: 3)
-                FeatureRow(symbol: "bolt.fill", colors: [Color(red: 0.25, green: 0.86, blue: 0.62), Brand.live],
+                FeatureRow(symbol: "bolt.fill", colors: [Brand.live.opacity(0.8), Brand.live],
                            title: "Moves in an instant", text: "The Mac keeps one live channel to the phone.")
                     .reveal(shown, order: 4)
-                FeatureRow(symbol: "arrow.uturn.backward.circle.fill", colors: [Color(red: 0.99, green: 0.42, blue: 0.42), Brand.danger],
+                FeatureRow(symbol: "arrow.uturn.backward.circle.fill", colors: [Brand.pin[0], Brand.danger],
                            title: "Stop restores everything", text: "Your real location returns right away.")
                     .reveal(shown, order: 5)
             }

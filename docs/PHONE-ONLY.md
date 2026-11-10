@@ -24,7 +24,22 @@ Select **This iPhone** in the bottom card:
 - **Pause/Resume:** pauses route time as well as movement.
 - **Automatic stop:** the phone checks a deadline while executing. iOS suspension/termination can delay or prevent the timer; verify the actual position in Maps.
 
-A static hold is re-applied every 15 seconds to detect/recover a lost connection. Motion uses monotonic time and caps a stalled update's advance instead of jumping to catch up. Stop cancels pending planning/motion. If restoring the real position is not confirmed, the app says so and recommends a phone restart.
+A static hold is re-applied every 5 seconds to notice a lost connection. If the connection drops while a location is held (the screen locked, LocalDevVPN blinked, the network changed), the session is **kept** and the app reconnects every few seconds for up to 30 minutes, instead of ending and putting the real location back. The pill says "Reconnecting". Motion uses monotonic time and caps a stalled update's advance instead of jumping to catch up. Stop cancels pending planning/motion. If restoring the real position is not confirmed, the app says so and recommends a phone restart.
+
+## Staying on with the screen locked
+
+The simulated location lasts only while AnyWhere's developer connection is open, and iOS closes it when it suspends the app. Before 1.3 the app kept itself awake with `CLLocationUpdate.liveUpdates`, which pauses when the device is stationary, and a held (teleported) location always looks stationary, so iOS suspended the app soon after the lock. Now, the way StikDebug does it:
+
+- classic `CLLocationManager` updates with automatic pausing off, coarse accuracy (cheap on battery) and background updates allowed, plus a `CLBackgroundActivitySession`;
+- "Always" location permission, asked once after When In Use;
+- silent audio mixed with other sound (Settings ▸ Stay on when locked), health-checked every 2 seconds;
+- a notification if the connection drops while the screen is off.
+
+LocalDevVPN opens by itself when AnyWhere opens and the developer port doesn't answer (`localdevvpn://enable?scheme=anywhere`; it comes straight back). Turn that off in Settings.
+
+## The 7-day signing
+
+A free Apple ID signs an app for 7 days. Install AnyWhere through [SideStore](https://sidestore.io) and it is refreshed on the iPhone with no computer: in the background, and by a daily Shortcuts automation running SideStore's "Refresh All Apps". Each release publishes a SideStore source at `releases/latest/download/source.json` (made by `scripts/make-sidestore-source.py`); **Settings ▸ Add AnyWhere to SideStore** adds it, so updates show up in SideStore too. AnyWhere reads its own provisioning profile, shows when the signing ends, and reminds you a day before.
 
 Keep LocalDevVPN on. Local commands do not require Wi-Fi or a Mac; cellular behavior still needs a physical-device test. Directions and image personalization may require internet.
 
@@ -39,7 +54,7 @@ Copy the small print: it identifies pairing, reachability, tunnel, developer-ima
 | Developer support cannot load | Import the matching extracted Apple DDI folder, enable Developer Mode and check internet for Apple's signing service. |
 | Location service fails to open | Check the detailed service/protocol error; a different OS build may need a library update. |
 | Stop is not confirmed | Check Maps; restart the phone if it still reports the simulated position. |
-| App stops opening | Refresh its signing with your sideloading tool. GPS control does not renew signing. |
+| App stops opening | Its 7-day signing ended. Refresh it in SideStore (see above), or with your sideloading tool. |
 
 ## Verification
 

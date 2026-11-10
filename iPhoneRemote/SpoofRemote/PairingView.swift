@@ -263,7 +263,7 @@ struct PairingView: View {
     private func currentServer(_ server: ConnectionManager.Server) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
-                IconTile(symbol: "checkmark.seal.fill", colors: [Color(red: 0.25, green: 0.86, blue: 0.62), Brand.live], size: 42)
+                IconTile(symbol: "checkmark.seal.fill", colors: [Brand.live.opacity(0.8), Brand.live], size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(server.name).font(.headline)
                     Text("\(server.host):\(String(server.port))")

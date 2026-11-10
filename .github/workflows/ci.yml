@@ -394,6 +394,9 @@ jobs:
           ls -R
           sha256sum ./*/*.dmg ./*/*.ipa | sed 's#  [^ ]*/#  #' > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          # The SideStore source: SideStore installs, updates and refreshes AnyWhere on the iPhone from
+          # releases/latest/download/source.json (see scripts/make-sidestore-source.py).
+          python3 ../scripts/make-sidestore-source.py --tag "$GITHUB_REF_NAME" --ipa ./*/AnyWhere.ipa > source.json
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "AnyWhere ${GITHUB_REF_NAME#v}" --generate-notes \
-            ./*/*.dmg ./*/*.ipa SHA256SUMS.txt
+            ./*/*.dmg ./*/*.ipa SHA256SUMS.txt source.json

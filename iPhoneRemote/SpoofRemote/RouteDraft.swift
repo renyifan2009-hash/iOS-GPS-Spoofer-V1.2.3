@@ -37,6 +37,9 @@ final class RouteDraft {
     var speedKmh: Double = SpeedUnits.current.defaultKmh(driving: true)
     var repeats: Repeat = .once
     var timeOfDayTraffic = false
+    /// Drive like a real person: ease off and on, slow for corners, stop at some lights and signs, and
+    /// (on this iPhone) natural GPS wobble. Off, the route keeps one speed on a clean line.
+    var natural = true
     /// The name it was saved or loaded under, if any.
     var name: String?
 
@@ -166,7 +169,7 @@ final class RouteDraft {
             travelMode: driving ? "driving" : "walking",
             loopMode: repeats.rawValue,
             speed: max(0.1, speedKmh / 3.6),
-            realistic: true,
+            realistic: natural,
             timeOfDayTraffic: driving ? timeOfDayTraffic : false,
             name: name ?? self.name)
     }

@@ -19,6 +19,8 @@ final class PhoneMotionController: ControlTarget {
     private(set) var planning = false
     /// While a route stands at one of its stops: which, and for how long (shown as "Leaving in 29:41").
     private(set) var routeWait: RouteWait?
+    /// The exact place being held. With the GPS wobble on, `phone.current` wanders a few metres around it.
+    private(set) var anchor: CLLocationCoordinate2D?
     private var heading = 0.0
     private var input = JoystickInput.idle
     private var inputAt = Date.distantPast
@@ -56,8 +58,13 @@ final class PhoneMotionController: ControlTarget {
         guard await settle(), token == generation else { return false }
         guard await phone.set(coordinate, name: name), token == generation else { return false }
         activity = joystick ? "joystick" : "hold"
+        anchor = joystick ? nil : coordinate
         lastError = nil
-        if joystick { runJoystick(token: token) }
+        if joystick {
+            runJoystick(token: token)
+        } else {
+            holdNaturally(at: StandaloneRoute.Point(coordinate.latitude, coordinate.longitude), token: token)
+        }
         return true
     }
 
@@ -91,7 +98,8 @@ final class PhoneMotionController: ControlTarget {
                 let now = ContinuousClock.now
                 let dt = min(0.5, max(0, previous.duration(to: now).seconds))
                 previous = now
-                guard !self.phone.isUpdatingLocation else { continue }
+                // While the connection is coming back, the heartbeat does the reconnecting.
+                guard !self.phone.isUpdatingLocation, !self.phone.isReconnecting else { continue }
                 let speed = Date().timeIntervalSince(self.inputAt) <= RemoteAPI.joystickTimeout ? self.input.speed : 0
                 self.speed = speed
                 guard speed > 0, let current = self.phone.current else { continue }
@@ -99,6 +107,7 @@ final class PhoneMotionController: ControlTarget {
                                            meters: speed * dt, bearing: self.input.heading)
                 guard await self.phone.set(CLLocationCoordinate2D(latitude: moved.latitude, longitude: moved.longitude),
                                           name: "Joystick"), token == self.generation else {
+                    if token == self.generation, self.phone.isReconnecting { self.speed = 0; continue }
                     if token == self.generation { self.lastError = self.phone.lastError; self.speed = 0 }
                     return
                 }
@@ -139,8 +148,8 @@ final class PhoneMotionController: ControlTarget {
             guard await settle(), token == generation else { return false }
             guard await phone.set(.init(latitude: first.latitude, longitude: first.longitude), name: request.name),
                   token == generation else { return false }
-            activity = "route"; progress = 0; paused = false; lastError = nil
-            runRoute(route, token: token)
+            activity = "route"; progress = 0; paused = false; lastError = nil; anchor = nil
+            runRoute(route, natural: request.realistic, driving: request.travelMode == "driving", token: token)
             return true
         } catch {
             if token == generation { lastError = "Couldn't plan this route on the iPhone: \(error.localizedDescription)" }
@@ -174,8 +183,13 @@ final class PhoneMotionController: ControlTarget {
         }
     }
 
-    private func runRoute(_ route: StandaloneRoute, token: Int) {
+    /// Play the route. With `natural` on (Drive like a real person) the car eases off and on, slows for
+    /// corners, stops at some lights and signs, and the GPS wobbles a few metres like a real phone's;
+    /// off, it keeps to the selected speed on a clean line.
+    private func runRoute(_ route: StandaloneRoute, natural: Bool, driving: Bool, token: Int) {
         runner = Task { [weak self] in
+            var drive = NaturalDrive(route: route, driving: driving)
+            var wobble = GPSWobble(size: natural ? (driving ? 3.5 : 3) : 0)
             var elapsed = 0.0
             var previous = ContinuousClock.now
             while !Task.isCancelled {
@@ -184,19 +198,63 @@ final class PhoneMotionController: ControlTarget {
                 let now = ContinuousClock.now
                 let dt = min(0.5, max(0, previous.duration(to: now).seconds))
                 previous = now
-                guard !self.paused, !self.phone.isUpdatingLocation else { self.speed = 0; continue }
-                let next = elapsed + dt
-                let sample = route.sample(at: next)
-                guard await self.phone.set(.init(latitude: sample.point.latitude, longitude: sample.point.longitude),
+                // Paused, or the connection is coming back (the heartbeat reconnects): time stands still.
+                guard !self.paused, !self.phone.isUpdatingLocation, !self.phone.isReconnecting else {
+                    self.speed = 0
+                    continue
+                }
+                // Worked out on a copy, and kept only once the iPhone has the point: a move that fails
+                // while the connection comes back mustn't skip the car ahead.
+                var trial = drive
+                let step = natural ? trial.advance(dt: dt)
+                    : NaturalDrive.Step(elapsed: elapsed + dt, speed: route.speed, reason: nil, remaining: nil)
+                let sample = route.sample(at: step.elapsed)
+                let shown = wobble.apply(latitude: sample.point.latitude, longitude: sample.point.longitude, dt: dt)
+                guard await self.phone.set(.init(latitude: shown.latitude, longitude: shown.longitude),
                                           name: self.phone.currentName), token == self.generation else {
+                    if token == self.generation, self.phone.isReconnecting { self.speed = 0; continue }
                     if token == self.generation { self.lastError = self.phone.lastError; self.speed = 0 }
                     return
                 }
-                elapsed = next; self.progress = sample.progress
-                self.speed = sample.moving ? route.speed : 0
-                let wait = route.waiting(at: next).map { RouteWait(reason: "stop", stop: $0.stop, remaining: $0.remaining) }
+                drive = trial
+                elapsed = step.elapsed; self.progress = sample.progress
+                self.speed = sample.moving && step.reason == nil ? step.speed : 0
+                let wait: RouteWait?
+                if let stop = route.waiting(at: step.elapsed) {
+                    wait = RouteWait(reason: "stop", stop: stop.stop, remaining: stop.remaining)
+                } else if let reason = step.reason {
+                    wait = RouteWait(reason: reason, remaining: step.remaining)
+                } else {
+                    wait = nil
+                }
                 if wait != self.routeWait { self.routeWait = wait }
-                if sample.finished { self.activity = "hold"; self.speed = 0; self.routeWait = nil; return }
+                if sample.finished {
+                    self.activity = "hold"; self.speed = 0; self.routeWait = nil
+                    self.anchor = CLLocationCoordinate2D(latitude: sample.point.latitude, longitude: sample.point.longitude)
+                    if natural { self.holdNaturally(at: sample.point, token: token) }
+                    return
+                }
+            }
+        }
+    }
+
+    /// GPS wobble while a place is held, so it doesn't sit on one exact point like a pin: a phone
+    /// standing still still wanders a few metres. Off in Settings, the point stays exact.
+    private func holdNaturally(at point: StandaloneRoute.Point, token: Int) {
+        guard NaturalSettings.holdWobble else { return }
+        runner = Task { [weak self] in
+            var wobble = GPSWobble(size: 2.2)
+            var previous = ContinuousClock.now
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, token == self.generation, self.phone.isSpoofing, self.activity == "hold" else { return }
+                let now = ContinuousClock.now
+                let dt = previous.duration(to: now).seconds
+                previous = now
+                guard !self.phone.isUpdatingLocation, !self.phone.isReconnecting else { continue }
+                let shown = wobble.apply(latitude: point.latitude, longitude: point.longitude, dt: dt)
+                _ = await self.phone.set(.init(latitude: shown.latitude, longitude: shown.longitude),
+                                         name: self.phone.currentName)
             }
         }
     }
@@ -232,7 +290,7 @@ final class PhoneMotionController: ControlTarget {
     func stop() async -> Bool {
         cancelMotion()
         timer?.cancel(); timer = nil; deadline = nil
-        planning = false; activity = "hold"
+        planning = false; activity = "hold"; anchor = nil
         return await phone.stop()
     }
 
@@ -250,6 +308,16 @@ final class PhoneMotionController: ControlTarget {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
         }
         return !phone.isUpdatingLocation
+    }
+}
+
+/// Choices for how natural the simulated GPS looks, from Settings.
+enum NaturalSettings {
+    static let holdWobbleKey = "natural.holdWobble"
+
+    /// A held place wanders a few metres like a real phone's GPS. On unless turned off.
+    static var holdWobble: Bool {
+        UserDefaults.standard.object(forKey: holdWobbleKey) as? Bool ?? true
     }
 }
 

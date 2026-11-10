@@ -204,6 +204,7 @@ struct RouteCardView: View {
             .pickerStyle(.segmented)
 
             Toggle("Follow roads & paths", isOn: $route.followRoads)
+            Toggle(route.driving ? "Drive like a real person" : "Walk like a real person", isOn: $route.natural)
             if route.driving, connection.executionName == "Mac" {
                 Toggle("Slower in rush hour", isOn: $route.timeOfDayTraffic)
             }
