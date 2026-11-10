@@ -113,7 +113,7 @@ struct MapSearchView: View {
                 ForEach(search.results) { result in
                     Button { choose(result) } label: {
                         PlaceRowLabel(title: result.name, subtitle: result.subtitle ?? result.coordinateText, symbol: "mappin.circle.fill",
-                                      colors: [Color(red: 0.99, green: 0.42, blue: 0.42), Color(red: 0.86, green: 0.15, blue: 0.27)])
+                                      colors: Brand.pin)
                     }
                 }
             }

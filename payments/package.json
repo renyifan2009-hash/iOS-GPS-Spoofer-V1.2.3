@@ -1,0 +1,15 @@
+{
+  "name": "anywhere-payments",
+  "private": true,
+  "description": "AnyWhere Pro: Stripe Checkout, license keys and signed license checks for the iPhone app.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "keys": "node scripts/make-keys.mjs",
+    "setup-stripe": "node scripts/setup-stripe.mjs"
+  },
+  "dependencies": {
+    "stripe": "^23.1.0"
+  }
+}

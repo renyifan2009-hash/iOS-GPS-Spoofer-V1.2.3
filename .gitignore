@@ -11,3 +11,6 @@ iPhoneRemote/Vendor/
 
 # Local agent worktrees and settings
 .claude/
+
+# Payment server dependencies
+payments/node_modules/

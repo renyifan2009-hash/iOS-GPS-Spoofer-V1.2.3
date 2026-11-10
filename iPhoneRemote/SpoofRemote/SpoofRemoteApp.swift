@@ -11,6 +11,7 @@ struct SpoofRemoteApp: App {
     @State private var routeLibrary = RouteLibrary()
     @State private var phone = OnDeviceController()
     @State private var updates = UpdateChecker()
+    @State private var licenses = LicenseStore()
 
     var body: some Scene {
         WindowGroup {
@@ -20,6 +21,7 @@ struct SpoofRemoteApp: App {
                 .environment(routeLibrary)
                 .environment(phone)
                 .environment(updates)
+                .environment(licenses)
                 .tint(Brand.indigo)
         }
     }

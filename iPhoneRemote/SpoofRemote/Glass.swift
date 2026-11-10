@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// SpoofRemote's look: Apple's Liquid Glass (iOS 26 and later, when built
-/// with the iOS 26 SDK) over a night-sky brand gradient. Every helper falls
+/// with the iOS 26 SDK) in soft sage, mist and lavender tones. Every helper falls
 /// back to system materials, so the app still builds with Xcode 16 and runs
 /// on iOS 17.
 ///
@@ -10,14 +10,23 @@ import UIKit
 /// SwiftUI 7 ships in the iOS 26 SDK), not on the compiler version: a newer
 /// Swift toolchain can be paired with an older SDK that has no Liquid Glass.
 enum Brand {
-    // The AnyWhere logo's range: deep cobalt to bright cyan.
-    static let indigo = Color(red: 0.07, green: 0.27, blue: 0.85)
-    static let violet = Color(red: 0.25, green: 0.38, blue: 0.97)
-    static let sky = Color(red: 0.13, green: 0.76, blue: 0.96)
-    static let live = Color(red: 0.13, green: 0.77, blue: 0.37)
-    static let warning = Color(red: 0.96, green: 0.62, blue: 0.04)
-    static let danger = Color(red: 0.94, green: 0.27, blue: 0.27)
-    static let night = Color(red: 0.015, green: 0.08, blue: 0.22)
+    // Soft, calm tones: sage and mist with a dusty lavender, warm apricot for "wait" and terracotta
+    // for Stop. (The names are the old ones, so every view picked the new palette up at once.)
+    /// The main accent: sage.
+    static let indigo = Color(red: 0.369, green: 0.545, blue: 0.522)
+    /// Dusty lavender.
+    static let violet = Color(red: 0.604, green: 0.576, blue: 0.769)
+    /// The second accent: mist blue.
+    static let sky = Color(red: 0.553, green: 0.706, blue: 0.780)
+    /// Live / ready: soft moss.
+    static let live = Color(red: 0.498, green: 0.702, blue: 0.541)
+    static let warning = Color(red: 0.878, green: 0.659, blue: 0.404)
+    /// Stop and errors: terracotta.
+    static let danger = Color(red: 0.831, green: 0.478, blue: 0.431)
+    /// The dark sheets' background: deep slate green.
+    static let night = Color(red: 0.102, green: 0.145, blue: 0.149)
+    /// Pins: a softer coral than a warning red.
+    static let pin = [Color(red: 0.91, green: 0.56, blue: 0.50), Color(red: 0.78, green: 0.41, blue: 0.37)]
 
     static var gradient: LinearGradient {
         LinearGradient(colors: [indigo, sky], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -43,18 +52,25 @@ enum Brand {
 /// the screen is light. In dark mode, and on the sheets that are always dark,
 /// they are the brand colours as they were.
 extension Brand {
-    /// Amber for text: about 5 to 1 or better on the light glass card.
+    /// Apricot for text: about 5 to 1 or better on the light glass card.
     static let warningText = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.96, green: 0.62, blue: 0.04, alpha: 1)
-            : UIColor(red: 0.48, green: 0.31, blue: 0.00, alpha: 1)
+            ? UIColor(red: 0.92, green: 0.72, blue: 0.47, alpha: 1)
+            : UIColor(red: 0.50, green: 0.33, blue: 0.10, alpha: 1)
     })
 
-    /// Sky blue for text.
+    /// Mist blue for text.
     static let skyText = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.13, green: 0.76, blue: 0.96, alpha: 1)
-            : UIColor(red: 0.00, green: 0.38, blue: 0.62, alpha: 1)
+            ? UIColor(red: 0.62, green: 0.78, blue: 0.86, alpha: 1)
+            : UIColor(red: 0.20, green: 0.38, blue: 0.47, alpha: 1)
+    })
+
+    /// Sage for text and links.
+    static let accentText = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.60, green: 0.78, blue: 0.74, alpha: 1)
+            : UIColor(red: 0.22, green: 0.39, blue: 0.37, alpha: 1)
     })
 }
 
@@ -265,11 +281,11 @@ struct AuroraBackground: View {
             } else {
                 ZStack {
                     Brand.night
-                    Circle().fill(Brand.violet.opacity(0.55)).frame(width: 420).blur(radius: 90)
+                    Circle().fill(Brand.violet.opacity(0.35)).frame(width: 420).blur(radius: 90)
                         .offset(x: -120 + 40 * cos(t / 5), y: -260 + 30 * sin(t / 4))
-                    Circle().fill(Brand.sky.opacity(0.45)).frame(width: 380).blur(radius: 90)
+                    Circle().fill(Brand.sky.opacity(0.3)).frame(width: 380).blur(radius: 90)
                         .offset(x: 140 + 30 * sin(t / 6), y: 220 + 40 * cos(t / 5))
-                    Circle().fill(Brand.indigo.opacity(0.5)).frame(width: 340).blur(radius: 80)
+                    Circle().fill(Brand.indigo.opacity(0.4)).frame(width: 340).blur(radius: 80)
                         .offset(x: 60 * cos(t / 7), y: 40 * sin(t / 6))
                 }
                 .ignoresSafeArea()
@@ -278,9 +294,9 @@ struct AuroraBackground: View {
     }
 
     private static let colors: [Color] = [
-        Brand.night, Color(red: 0.04, green: 0.22, blue: 0.60), Brand.night,
-        Color(red: 0.03, green: 0.18, blue: 0.52), Brand.indigo, Color(red: 0.03, green: 0.30, blue: 0.55),
-        Brand.night, Color(red: 0.03, green: 0.38, blue: 0.62), Color(red: 0.02, green: 0.08, blue: 0.24),
+        Brand.night, Color(red: 0.16, green: 0.24, blue: 0.24), Brand.night,
+        Color(red: 0.19, green: 0.25, blue: 0.30), Color(red: 0.27, green: 0.40, blue: 0.38), Color(red: 0.26, green: 0.25, blue: 0.34),
+        Brand.night, Color(red: 0.24, green: 0.33, blue: 0.37), Color(red: 0.08, green: 0.11, blue: 0.12),
     ]
 
     private static func points(_ t: TimeInterval) -> [SIMD2<Float>] {

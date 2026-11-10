@@ -9,6 +9,7 @@ struct AutoStopRow: View {
     var connection: any ControlTarget
     /// Just an icon (and the countdown when set), to sit in a header.
     var compact = false
+    @State private var choosing = false
 
     private var deadline: Date? {
         guard let at = connection.status?.autoStopAt else { return nil }
@@ -37,12 +38,8 @@ struct AutoStopRow: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Cancel the automatic stop")
             } else {
-                Menu {
-                    ForEach(Killswitch.presetMinutes, id: \.self) { minutes in
-                        Button(Killswitch.label(minutes: minutes)) {
-                            Task { await connection.setAutoStop(minutes: minutes) }
-                        }
-                    }
+                Button {
+                    choosing = true
                 } label: {
                     if compact {
                         Image(systemName: "timer")
@@ -55,9 +52,12 @@ struct AutoStopRow: View {
                             .font(.subheadline.weight(.semibold))
                     }
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(Brand.accentText)
                 if !compact { Spacer(minLength: 0) }
             }
         }
+        .sheet(isPresented: $choosing) { AutoStopSheet(connection: connection) }
         .disabled(connection.isWorking)
         .animation(Brand.snappy, value: deadline != nil)
     }
