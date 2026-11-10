@@ -47,12 +47,55 @@ export function page(res, status, html) {
   res.end(html);
 }
 
-/** The price for a plan, found by its lookup key (made by scripts/setup-stripe.mjs). */
-export async function priceFor(plan) {
+/** What each plan costs, in US cents. */
+export const PRICES = {
+  monthly: { unit_amount: 299, recurring: { interval: "month" }, nickname: "Monthly" },
+  yearly: { unit_amount: 1500, recurring: { interval: "year" }, nickname: "Yearly" },
+  lifetime: { unit_amount: 2000, nickname: "Lifetime" },
+};
+
+/**
+ * The price for a plan, found by its lookup key. The first time a plan is bought in a Stripe account
+ * that doesn't have it yet, it is made (with the AnyWhere Pro product), so the account owner never has
+ * to run a script. Two first purchases at once can't make two: a lookup key is unique, so the loser of
+ * that race just reads the winner's price.
+ */
+export async function priceFor(plan, client = stripe()) {
   const spec = PLANS[plan];
   if (!spec) return null;
-  const prices = await stripe().prices.list({ lookup_keys: [spec.lookupKey], active: true, limit: 1 });
-  return prices.data[0]?.id ?? null;
+  const find = async () =>
+    (await client.prices.list({ lookup_keys: [spec.lookupKey], active: true, limit: 1 })).data[0]?.id ?? null;
+  const found = await find();
+  if (found) return found;
+  try {
+    const price = await client.prices.create({
+      currency: "usd",
+      lookup_key: spec.lookupKey,
+      product: await productId(client),
+      ...PRICES[plan],
+    });
+    return price.id;
+  } catch (error) {
+    const again = await find();
+    if (again) return again;
+    throw error;
+  }
+}
+
+async function productId(client) {
+  // A price for another plan already names the product.
+  const lookupKeys = Object.values(PLANS).map((p) => p.lookupKey);
+  const priced = (await client.prices.list({ lookup_keys: lookupKeys, limit: 3 })).data[0]?.product;
+  if (priced) return typeof priced === "string" ? priced : priced.id;
+  const products = await client.products.list({ active: true, limit: 100 });
+  const existing = products.data.find((p) => p.metadata?.anywhere === "pro");
+  if (existing) return existing.id;
+  const made = await client.products.create({
+    name: "AnyWhere Pro",
+    description: "Change your iPhone's location on the iPhone alone: teleport, natural drives with stops, joystick.",
+    metadata: { anywhere: "pro" },
+  });
+  return made.id;
 }
 
 /**

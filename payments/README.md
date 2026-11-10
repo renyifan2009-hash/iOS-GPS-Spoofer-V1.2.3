@@ -30,62 +30,38 @@ comes from an HMAC of the customer ID, so the webhook and the success page alway
 
 ## Set it up
 
-You need a Stripe account and a Vercel account. Start in Stripe's **test mode**.
+The Stripe account owner follows **[OWNER-SETUP.md](OWNER-SETUP.md)**. It's click-by-click with no code,
+and covers Stripe, deploying this folder to Vercel, the webhook and the customer portal. The developer's
+part:
 
-```bash
-cd payments
-npm install
-npm test
-```
-
-1. **Signing keys.** This prints a secret for the server and a public key for the app:
-
-   ```bash
-   npm run keys
-   ```
-
-2. **Products and prices.** This creates the three prices above. It is safe to run again.
-
-   ```bash
-   STRIPE_SECRET_KEY=sk_test_... npm run setup-stripe
-   ```
-
-3. **Deploy** the `payments` folder to Vercel, with these environment variables:
-
-   | Variable | Value |
-   |---|---|
-   | `STRIPE_SECRET_KEY` | `sk_test_…` (later `sk_live_…`) |
-   | `LICENSE_SIGNING_KEY` | from step 1 (secret) |
-   | `STRIPE_WEBHOOK_SECRET` | from step 4 |
-   | `PUBLIC_URL` | the deployment's address, for example `https://anywhere-pay.vercel.app` |
-
-   ```bash
-   vercel --cwd payments
-   ```
-
-4. **Webhook.** In Stripe go to **Developers ▸ Webhooks ▸ Add endpoint** and use
-   `https://<your deployment>/api/webhook` with the events `checkout.session.completed`,
-   `checkout.session.async_payment_succeeded`, `charge.refunded` and `charge.dispute.created` (the last
-   two take Lifetime away again after a full refund or a chargeback). Copy its signing secret into `STRIPE_WEBHOOK_SECRET`,
-   then redeploy.
-
-5. **Customer portal.** In Stripe go to **Settings ▸ Billing ▸ Customer portal**, turn it on, and allow
-   cancelling and switching between Monthly and Yearly.
-
-6. **The app.** In `iPhoneRemote/project.yml` set:
+1. **Signing keys** are already made. The public half is `AW_PAYMENTS_PUBLIC_KEY` in
+   `iPhoneRemote/project.yml`. The private half, `LICENSE_SIGNING_KEY`, is kept outside the repo and goes
+   privately to the owner for Vercel. To start over, run `npm run keys` and update both.
+2. **Prices** don't need setting up. The server makes the three prices (lookup keys above) in Stripe the
+   first time each plan is bought. `npm run setup-stripe` makes them ahead of time if you want to see
+   them first.
+3. When the owner sends the deployment address, set it in `iPhoneRemote/project.yml`:
 
    ```yaml
-   AW_PAYMENTS_SERVER: "https://<your deployment>"
-   AW_PAYMENTS_PUBLIC_KEY: "<from step 1>"
+   AW_PAYMENTS_SERVER: "https://<the deployment>"
    ```
 
-   Then build the app again. While these two settings are empty, payments are off and everything is free.
+   Then build the app again. While `AW_PAYMENTS_SERVER` is empty, payments are off and everything is free.
 
-7. **Test** a purchase with the card `4242 4242 4242 4242` (any future date, any CVC). The success page
-   should open AnyWhere, and Settings should show "Pro · Yearly · renews …".
+Server environment variables (set by the owner on Vercel):
 
-**Going live:** switch to `sk_live_…`, run `setup-stripe` again with the live key, make a live webhook,
-and update `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on Vercel. The signing keys stay the same.
+| Variable | Value |
+|---|---|
+| `STRIPE_SECRET_KEY` | `sk_test_…`, later `sk_live_…` |
+| `LICENSE_SIGNING_KEY` | the private signing key (secret) |
+| `STRIPE_WEBHOOK_SECRET` | the webhook's `whsec_…` |
+| `PUBLIC_URL` | the deployment's address |
+
+Webhook events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`charge.refunded`, `charge.dispute.created`. The last two take Lifetime away again after a full refund or
+a chargeback.
+
+Run the tests with `npm install && npm test`.
 
 ## Endpoints
 
