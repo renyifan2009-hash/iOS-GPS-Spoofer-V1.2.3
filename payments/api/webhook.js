@@ -1,6 +1,7 @@
 // Stripe → here when a Checkout finishes, so the key exists even if the buyer closes the page before the
-// success page loads. Subscriptions need nothing stored: /api/license reads them from Stripe each time.
-import { ensureLicense, rawBody, send, stripe } from "../lib/server.js";
+// success page loads, and when a lifetime payment is refunded or disputed, to take Pro back.
+// Subscriptions need nothing stored: /api/license reads them from Stripe each time.
+import { ensureLicense, rawBody, revokeLifetime, send, stripe } from "../lib/server.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -16,6 +17,12 @@ export default async function handler(req, res) {
   try {
     if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
       await ensureLicense(event.data.object);
+    } else if (event.type === "charge.refunded" && event.data.object.refunded) {
+      // Fully refunded: a lifetime purchase no longer counts. (A subscription's refund needs nothing
+      // here: /api/license reads its live status.)
+      await revokeLifetime(event.data.object);
+    } else if (event.type === "charge.dispute.created") {
+      await revokeLifetime(await stripe().charges.retrieve(event.data.object.charge));
     }
     send(res, 200, { received: true });
   } catch (error) {

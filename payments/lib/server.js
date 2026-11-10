@@ -56,6 +56,21 @@ export async function priceFor(plan) {
 }
 
 /**
+ * A refunded or disputed charge: if it paid for Lifetime, the customer loses it (the key stays, and
+ * works again for any subscription they have or buy).
+ */
+export async function revokeLifetime(charge) {
+  const customerId = typeof charge?.customer === "string" ? charge.customer : charge?.customer?.id;
+  const intentId = typeof charge?.payment_intent === "string" ? charge.payment_intent : charge?.payment_intent?.id;
+  if (!customerId || !intentId) return false;
+  const intent = await stripe().paymentIntents.retrieve(intentId);
+  if (intent.metadata?.anywhere_plan !== "lifetime") return false;
+  // An empty string removes a metadata key.
+  await stripe().customers.update(customerId, { metadata: { anywhere_lifetime: "" } });
+  return true;
+}
+
+/**
  * Give the customer of a finished Checkout a license key: the webhook and the success page both call
  * this, in either order or at once, and get the same key. A lifetime purchase is marked on the customer.
  */

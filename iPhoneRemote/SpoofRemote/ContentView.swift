@@ -34,6 +34,9 @@ struct ContentView: View {
     @State private var showPhoneSetup = false
     @State private var showSettings = false
     @State private var showPaywall = false
+    /// A pairing file that came in an `anywhere://pairingfile` link, waiting for the person to say yes.
+    /// Any page or app can open such a link, so it never replaces the working file on its own.
+    @State private var offeredPairing: Data?
     @State private var pairAfterIntro = false
     @State private var route = RouteDraft()
     @State private var joystick = JoystickModel()
@@ -83,6 +86,18 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showPaywall) {
             PaywallView()
+        }
+        .alert(phone.isSetUp ? "Replace the pairing file?" : "Use this pairing file?",
+               isPresented: Binding(get: { offeredPairing != nil }, set: { if !$0 { offeredPairing = nil } })) {
+            Button(phone.isSetUp ? "Replace" : "Use It", role: phone.isSetUp ? .destructive : nil) {
+                if let data = offeredPairing { importOfferedPairing(data) }
+                offeredPairing = nil
+            }
+            Button("Cancel", role: .cancel) { offeredPairing = nil }
+        } message: {
+            Text(phone.isSetUp
+                 ? "A link is offering a new pairing file. Only say yes if you just asked SideStore for it: it replaces the one that works now."
+                 : "A link is offering this iPhone's pairing file. Only say yes if you just asked SideStore for it.")
         }
         .onOpenURL { url in
             if url.scheme == "anywhere" {
@@ -236,19 +251,24 @@ struct ContentView: View {
         case "activate":
             if let key = value("key") { Task { if await licenses.activate(key: key) { showPaywall = false } } }
         case "pairingfile":
-            // SideStore's answer to "sidestore://pairing?urlname=anywhere".
-            guard let text = value("data"), let data = Data(base64Encoded: text) else { return }
-            let file = FileManager.default.temporaryDirectory.appending(path: "SideStore.mobiledevicepairing")
-            guard (try? data.write(to: file)) != nil else { return }
-            if phone.importPairingFile(from: file) {
-                hasSeenIntro = true
-                if !isSpoofing { source = .thisPhone }
-            }
-            presentPhoneSetup()
+            // SideStore's answer to "sidestore://pairing?urlname=anywhere". Asked about first.
+            guard let text = value("data"), let data = Data(base64Encoded: text), data.count < 1_000_000 else { return }
+            offeredPairing = data
         default:
             // Back from LocalDevVPN: is the connection there now?
             Task { await checkVPN(openIfOff: false) }
         }
+    }
+
+    private func importOfferedPairing(_ data: Data) {
+        let file = FileManager.default.temporaryDirectory.appending(path: "SideStore.mobiledevicepairing")
+        guard (try? data.write(to: file, options: .completeFileProtection)) != nil else { return }
+        defer { try? FileManager.default.removeItem(at: file) }
+        if phone.importPairingFile(from: file) {
+            hasSeenIntro = true
+            if !isSpoofing { source = .thisPhone }
+        }
+        presentPhoneSetup()
     }
 
     /// Is LocalDevVPN on? If not, and the setting allows, open it: it turns on and comes back.

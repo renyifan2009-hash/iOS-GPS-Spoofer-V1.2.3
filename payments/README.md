@@ -64,8 +64,9 @@ npm test
    ```
 
 4. **Webhook.** In Stripe go to **Developers ▸ Webhooks ▸ Add endpoint** and use
-   `https://<your deployment>/api/webhook` with the events `checkout.session.completed` and
-   `checkout.session.async_payment_succeeded`. Copy its signing secret into `STRIPE_WEBHOOK_SECRET`,
+   `https://<your deployment>/api/webhook` with the events `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`, `charge.refunded` and `charge.dispute.created` (the last
+   two take Lifetime away again after a full refund or a chargeback). Copy its signing secret into `STRIPE_WEBHOOK_SECRET`,
    then redeploy.
 
 5. **Customer portal.** In Stripe go to **Settings ▸ Billing ▸ Customer portal**, turn it on, and allow

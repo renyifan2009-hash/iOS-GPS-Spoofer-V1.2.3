@@ -18,6 +18,8 @@ final class SilentAudio {
 
     func start() {
         wanted = true
+        // First, so a start that fails now (a call holds the audio session) is tried again later.
+        watchHealth()
         guard engine == nil else { return }
         let session = AVAudioSession.sharedInstance()
         do {
@@ -44,7 +46,6 @@ final class SilentAudio {
         self.engine = engine
         self.player = player
         observe()
-        watchHealth()
     }
 
     private func watchHealth() {

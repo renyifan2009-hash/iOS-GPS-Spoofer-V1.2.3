@@ -40,7 +40,6 @@ struct CountdownWheel: UIViewRepresentable {
             let value = picker.countDownDuration
             if value > parent.maxSeconds {
                 // Past the longest: roll back to it, the way the wheel springs at its ends.
-                picker.setDate(picker.date, animated: false)
                 picker.countDownDuration = parent.maxSeconds
                 UISelectionFeedbackGenerator().selectionChanged()
             }
