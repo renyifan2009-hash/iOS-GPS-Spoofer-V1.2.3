@@ -19,11 +19,37 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Shows where iOS reports this iPhone to be, so you can check the simulated location. In the iPhone-only mode it also keeps AnyWhere running while it holds a location.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Keeps AnyWhere running while the screen is locked, so the location you set stays on. AnyWhere doesn't track or keep where you are.</string>
 	<!-- The iPhone-only mode: the location lasts while the app runs, so a
 	     background location session keeps it running. -->
+	<!-- `audio`: silent, mixed-in audio keeps the app scheduled with the screen locked, so the
+	     developer connection (and the simulated location with it) stays open. See KeepAlive. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<string>audio</string>
+	</array>
+	<!-- anywhere:// brings the app back from LocalDevVPN, and activates a license from the
+	     payment page (anywhere://activate?key=…). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.iosgpsspoof.remote</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>anywhere</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Asked with canOpenURL: is LocalDevVPN / SideStore installed? -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>localdevvpn</string>
+		<string>stosvpn</string>
+		<string>sidestore</string>
+		<string>altstore</string>
 	</array>
 	<!-- Pairing files saved by the Mac app open in SpoofRemote (AirDrop, Files, Mail). -->
 	<key>CFBundleDocumentTypes</key>
@@ -61,6 +87,12 @@
 			</dict>
 		</dict>
 	</array>
+	<!-- AnyWhere Pro: the payment server (payments/ in this repo) and the public key it signs
+	     licenses with. Both come from project.yml; empty means payments are off and all is free. -->
+	<key>AWPaymentsServer</key>
+	<string>$(AW_PAYMENTS_SERVER)</string>
+	<key>AWPaymentsPublicKey</key>
+	<string>$(AW_PAYMENTS_PUBLIC_KEY)</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
 </dict>

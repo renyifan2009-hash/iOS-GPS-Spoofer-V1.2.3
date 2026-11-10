@@ -45,6 +45,16 @@ final class OnDeviceController {
     var isSpoofing: Bool { phase == .active }
     var isWorking: Bool { phase == .connecting || phase == .stopping }
 
+    /// The connection to the developer services dropped while a location was held (the screen locked,
+    /// LocalDevVPN restarted, the network changed). The location is still wanted, so the app keeps the
+    /// session and tries again every few seconds until it is back, Stop is tapped, or `reconnectWindow`
+    /// passes. Nil while the connection is fine.
+    private(set) var reconnectingSince: Date?
+    var isReconnecting: Bool { reconnectingSince != nil }
+    /// Told once each time a held location loses its connection, so the app can open LocalDevVPN (in the
+    /// foreground) or post a notification (in the background).
+    @ObservationIgnored var onConnectionLost: (@MainActor () -> Void)?
+
     /// Whether LocalDevVPN routes this iPhone's own address back to it. Nil
     /// until checked.
     var loopbackReachable: Bool? { ports?.anyAnswered }
@@ -78,6 +88,7 @@ final class OnDeviceController {
     @ObservationIgnored private let developerPortProbe: (@Sendable () async -> DeveloperPorts)?
     @ObservationIgnored private let recoveryDelay: Duration
     @ObservationIgnored private let heartbeatInterval: Duration
+    @ObservationIgnored private let reconnectWindow: Duration
     /// Counts calls to `stop()`. A `set` that was still running when one came
     /// in must not put its location back on screen: the stop cleared it.
     @ObservationIgnored private var stops = 0
@@ -90,13 +101,15 @@ final class OnDeviceController {
 
     init(engine: any OnDeviceOperations, pairing: PairingFile?, keepAlive: any BackgroundHolding,
          developerPortProbe: (@Sendable () async -> DeveloperPorts)? = nil,
-         heartbeatInterval: Duration = .seconds(15), recoveryDelay: Duration = .seconds(2)) {
+         heartbeatInterval: Duration = .seconds(5), recoveryDelay: Duration = .seconds(2),
+         reconnectWindow: Duration = .seconds(30 * 60)) {
         self.engine = engine
         self.pairing = pairing
         self.keepAlive = keepAlive
         self.developerPortProbe = developerPortProbe
         self.heartbeatInterval = heartbeatInterval
         self.recoveryDelay = recoveryDelay
+        self.reconnectWindow = reconnectWindow
         engine.onAbandonedCallEnded { [weak self] in
             Task { @MainActor in await self?.holdAgain() }
         }
@@ -216,6 +229,21 @@ final class OnDeviceController {
         file.save()
     }
 
+    #if DEBUG
+    /// Screenshots in the Simulator: a made-up pairing file, held in memory only (never the Keychain),
+    /// so the iPhone-only screens can be shown. Nothing can connect with it.
+    func useDemoPairing() {
+        var record: [String: Any] = [:]
+        for key in ["DeviceCertificate", "HostCertificate", "HostPrivateKey", "RootCertificate", "RootPrivateKey"] {
+            record[key] = Data("demo".utf8)
+        }
+        for key in ["HostID", "SystemBUID", "WiFiMACAddress"] { record[key] = "demo" }
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: record, format: .xml, options: 0),
+              let file = try? PairingFile(data: data) else { return }
+        pairing = file
+    }
+    #endif
+
     // MARK: LocalDevVPN
 
     @ObservationIgnored private var loopbackCheck: Task<Void, Never>?
@@ -322,6 +350,7 @@ final class OnDeviceController {
             phase = .active
             current = coordinate
             currentName = name
+            reconnectingSince = nil
             clearError()
             startHeartbeat()
             return true
@@ -332,6 +361,13 @@ final class OnDeviceController {
             // A remembered port that no longer leads anywhere would be tried
             // first every time. Forget it: Bonjour is asked again if needed.
             if remotePairingPort != nil { rememberRemotePairingPort(nil) }
+            if moving, Self.isWorthRetrying(error) {
+                // A location is held and the link dropped: most often the screen locked or LocalDevVPN
+                // blinked. Ending the session here is what used to put the real location back. Keep it,
+                // and let the heartbeat connect again.
+                beginReconnecting(after: error)
+                return false
+            }
             show(error)
             if moving, error is OnDeviceEngine.TimedOut {
                 // The call that's stuck still has the connection, and the
@@ -410,6 +446,7 @@ final class OnDeviceController {
         stops += 1
         heartbeat?.cancel()
         heartbeat = nil
+        reconnectingSince = nil
         if let stopTask { return await stopTask.value }
         guard phase != .idle else { return true }
         phase = .stopping
@@ -428,17 +465,73 @@ final class OnDeviceController {
         return cleared
     }
 
+    /// Re-applies the held location every `heartbeatInterval`, which also notices a dropped connection.
+    /// While reconnecting it beats faster, and only tries once the developer port answers again.
     private func startHeartbeat() {
         guard heartbeat == nil else { return }
-        let interval = heartbeatInterval
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
+                guard let interval = self?.nextBeat else { return }
                 do { try await Task.sleep(for: interval) } catch { return }
                 guard let self, self.phase == .active else { return }
+                if let since = self.reconnectingSince,
+                   Date().timeIntervalSince(since) > Self.seconds(self.reconnectWindow) {
+                    self.lostForGood()
+                    return
+                }
                 guard !self.isUpdatingLocation, let coordinate = self.current else { continue }
+                if self.isReconnecting {
+                    await self.checkLoopback()
+                    guard self.phase == .active, self.ports?.anyAnswered == true else { continue }
+                }
                 _ = await self.set(coordinate, name: self.currentName)
             }
         }
+    }
+
+    private var nextBeat: Duration {
+        isReconnecting ? max(recoveryDelay * 2, .milliseconds(20)) : heartbeatInterval
+    }
+
+    /// The app came back to the screen: check the held location straight away instead of waiting for
+    /// the next beat, so a connection that dropped while locked is back within a second or two.
+    func refreshNow() {
+        guard phase == .active, !isUpdatingLocation, let current else { return }
+        Task { await set(current, name: currentName) }
+    }
+
+    private func beginReconnecting(after error: Error) {
+        if reconnectingSince == nil {
+            reconnectingSince = Date()
+            onConnectionLost?()
+        }
+        lastError = "Connection lost. Reconnecting…"
+        lastErrorDetail = (error as? TunnelFailure)?.detail ?? error.localizedDescription
+        // Stay awake while trying: a suspended app can't reconnect.
+        keepAlive.start()
+        startHeartbeat()
+    }
+
+    /// Reconnecting went on for the whole window: end the session and say so.
+    private func lostForGood() {
+        let detail = lastErrorDetail
+        _ = giveUp(nil)
+        lastError = "Lost the connection, so the location stopped. Turn on LocalDevVPN, then start again."
+        lastErrorDetail = detail
+    }
+
+    /// Transport trouble is worth another try; a pairing file the iPhone refuses, Developer Mode being
+    /// off, or developer support that won't load is not, and trying again would only hide it.
+    static func isWorthRetrying(_ error: Error) -> Bool {
+        if error is OnDeviceEngine.TimedOut { return true }
+        guard let failure = error as? TunnelFailure else { return true }
+        if failure.isPairingProblem || failure.step == .pairingFile || failure.step == .developerImage { return false }
+        if failure.code == 24 || failure.message.lowercased().contains("developer mode") { return false }
+        return true
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     // MARK: Errors
@@ -447,6 +540,7 @@ final class OnDeviceController {
     private func giveUp(_ message: String?) -> Bool {
         heartbeat?.cancel()
         heartbeat = nil
+        reconnectingSince = nil
         if let message { show(message) }
         phase = .idle
         current = nil
@@ -885,31 +979,99 @@ protocol BackgroundHolding {
     func stop()
 }
 
+///
+/// Why the location used to stop when the screen locked: the old keep-alive only listened to
+/// `CLLocationUpdate.liveUpdates`. Those pause by themselves when the device stands still, and a held
+/// (teleported) location *is* standing still, so iOS was free to suspend the app a little after the lock,
+/// which closed the developer connection and with it the simulated location.
+///
+/// Now three things hold the app awake, each covering the others' gaps:
+/// 1. Classic `CLLocationManager` updates with `pausesLocationUpdatesAutomatically = false` and
+///    background updates allowed: they never pause for standing still.
+/// 2. A `CLBackgroundActivitySession`, so iOS 17+ treats the When In Use permission as in use after
+///    the lock (the blue pill).
+/// 3. Silent audio mixed with other sound (on by default, Settings can turn it off), which keeps the
+///    app scheduled even when Location Services delay updates.
 @MainActor
-final class KeepAlive: BackgroundHolding {
+final class KeepAlive: NSObject, BackgroundHolding, CLLocationManagerDelegate {
     private var session: CLBackgroundActivitySession?
-    private var updates: Task<Void, Never>?
     private let manager = CLLocationManager()
+    private let silence = SilentAudio()
+    private var running = false
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        // Coarse and rare on purpose (as Apple suggests for staying awake, and as StikDebug does): the
+        // updates are only there to keep the app running, so they shouldn't cost battery.
+        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+        manager.distanceFilter = CLLocationDistanceMax
+        manager.activityType = .otherNavigation
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = true
+    }
+
+    private static let askedAlwaysKey = "keepAwake.askedAlways"
 
     func start() {
-        guard session == nil else { return }
-        if manager.authorizationStatus == .notDetermined {
+        guard !running else { return }
+        running = true
+        switch manager.authorizationStatus {
+        case .notDetermined:
             manager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse where !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey):
+            UserDefaults.standard.set(true, forKey: Self.askedAlwaysKey)
+            manager.requestAlwaysAuthorization()
+        default:
+            break
         }
         session = CLBackgroundActivitySession()
-        updates = Task {
-            do {
-                for try await _ in CLLocationUpdate.liveUpdates(.otherNavigation) {
-                    if Task.isCancelled { break }
-                }
-            } catch {}
-        }
+        // Needs `location` in UIBackgroundModes (Info.plist), or this line traps.
+        manager.allowsBackgroundLocationUpdates = true
+        manager.startUpdatingLocation()
+        if KeepAwakeSettings.silentAudio { silence.start() }
     }
 
     func stop() {
-        updates?.cancel()
-        updates = nil
+        guard running else { return }
+        running = false
+        manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
         session?.invalidate()
         session = nil
+        silence.stop()
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {}
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in
+            // Permission came after start(): begin the updates that keep the app awake now.
+            guard self.running else { return }
+            switch self.manager.authorizationStatus {
+            case .authorizedWhenInUse:
+                self.manager.startUpdatingLocation()
+                // "Always" keeps iOS from ending the session after a long lock. Asked once, after
+                // When In Use, which is how iOS lets an app ask for it.
+                if !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey) {
+                    UserDefaults.standard.set(true, forKey: Self.askedAlwaysKey)
+                    self.manager.requestAlwaysAuthorization()
+                }
+            case .authorizedAlways:
+                self.manager.startUpdatingLocation()
+            default: break
+            }
+        }
+    }
+}
+
+/// The user's choices for staying awake in the background.
+enum KeepAwakeSettings {
+    static let silentAudioKey = "keepAwake.silentAudio"
+
+    /// On unless turned off in Settings.
+    static var silentAudio: Bool {
+        UserDefaults.standard.object(forKey: silentAudioKey) as? Bool ?? true
     }
 }

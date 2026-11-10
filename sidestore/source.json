@@ -1,0 +1,48 @@
+{
+  "name": "AnyWhere",
+  "identifier": "com.iosgpsspoof.source",
+  "subtitle": "Change your iPhone's location, privately.",
+  "description": "AnyWhere sets your iPhone's GPS location: teleport, drive a route with stops, or steer with a joystick. Add this source in SideStore to get updates and keep AnyWhere refreshed on the iPhone, with no computer.",
+  "iconURL": "https://raw.githubusercontent.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/main/brand/AnyWhere-ios-1024.png",
+  "website": "https://github.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3",
+  "tintColor": "#5E8B85",
+  "nsfw": false,
+  "featuredApps": [
+    "com.iosgpsspoof.remote"
+  ],
+  "apps": [
+    {
+      "name": "AnyWhere",
+      "bundleIdentifier": "com.iosgpsspoof.remote",
+      "developerName": "AnyWhere",
+      "subtitle": "Change your iPhone's location, privately.",
+      "localizedDescription": "Teleport anywhere, drive a route on real roads with rest stops, or steer with a joystick. The iPhone-only mode needs a pairing file and LocalDevVPN.",
+      "iconURL": "https://raw.githubusercontent.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/main/brand/AnyWhere-ios-1024.png",
+      "tintColor": "#5E8B85",
+      "category": "utilities",
+      "screenshots": [
+        "https://raw.githubusercontent.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/main/img/iphone-joystick.png",
+        "https://raw.githubusercontent.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/main/img/iphone-route.png"
+      ],
+      "versions": [
+        {
+          "version": "1.2",
+          "buildVersion": "5",
+          "date": "2026-10-15",
+          "localizedDescription": "AnyWhere 1.2. See the release notes on GitHub.",
+          "downloadURL": "https://github.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/releases/download/v2.5.0/AnyWhere.ipa",
+          "size": 5075948,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "AnyWhere finds your Mac on this network, and in the iPhone-only mode reaches this iPhone's own developer services.",
+          "NSLocationWhenInUseUsageDescription": "Shows where iOS reports this iPhone to be, so you can check the simulated location. In the iPhone-only mode it also keeps AnyWhere running while it holds a location."
+        }
+      }
+    }
+  ],
+  "news": []
+}
