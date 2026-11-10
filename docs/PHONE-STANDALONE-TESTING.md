@@ -1,6 +1,6 @@
 # Test phone-only GPS control
 
-Use the iPhone app built from `main` (these changes come in the release after 2.5.0; the published 2.5.0 iPhone app, 1.2 build 5, does not have them). The app is unsigned until your sideloading tool signs it.
+Use the iPhone app from release 2.6.0 or later (1.3, build 6), or one built from `main`. The 2.5.0 iPhone app (1.2, build 5) doesn't have these changes. The app is unsigned until your sideloading tool signs it.
 
 ## Compatibility status
 
