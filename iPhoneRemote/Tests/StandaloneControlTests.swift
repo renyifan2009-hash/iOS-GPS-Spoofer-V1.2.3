@@ -70,6 +70,17 @@ final class StandaloneControlTests: XCTestCase {
         return try PairingFile(data: PropertyListSerialization.data(fromPropertyList: dictionary, format: .xml, options: 0))
     }
 
+    /// Waits until `condition` holds, checking every 10 ms, for at most `seconds`. A fixed sleep flakes on a slow
+    /// CI machine, where a 30 ms heartbeat can take far longer than 30 ms to come round.
+    private func waitUntil(seconds: Double = 5, _ condition: () -> Bool) async throws -> Bool {
+        let end = ContinuousClock.now + .seconds(seconds)
+        while !condition() {
+            if ContinuousClock.now >= end { return false }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return true
+    }
+
     private func phone(_ engine: FakeDevice, probe: (@Sendable () async -> DeveloperPorts)? = nil) throws -> OnDeviceController {
         OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
                            developerPortProbe: probe ?? { DeveloperPorts(lockdown: true) })
@@ -238,14 +249,16 @@ final class StandaloneControlTests: XCTestCase {
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         XCTAssertTrue(started)
         engine.failSet = true
-        try await Task.sleep(for: .milliseconds(120))
+        let noticed = try await waitUntil { phone.isReconnecting }
+        XCTAssertTrue(noticed, "the heartbeat notices the link is down")
         XCTAssertTrue(phone.isSpoofing, "the session is kept while the link is down")
-        XCTAssertTrue(phone.isReconnecting)
+        // A few more heartbeats while it's still down: still only one notice.
+        try await Task.sleep(for: .milliseconds(150))
         XCTAssertEqual(lost, 1, "told once per outage")
         engine.failSet = false
-        try await Task.sleep(for: .milliseconds(120))
+        let back = try await waitUntil { !phone.isReconnecting }
+        XCTAssertTrue(back, "it reconnects once the link is back")
         XCTAssertTrue(phone.isSpoofing)
-        XCTAssertFalse(phone.isReconnecting)
         XCTAssertNil(phone.lastError)
         await phone.stop()
     }
@@ -259,7 +272,8 @@ final class StandaloneControlTests: XCTestCase {
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         XCTAssertTrue(started)
         engine.failSet = true
-        try await Task.sleep(for: .milliseconds(500))
+        let ended = try await waitUntil { !phone.isSpoofing }
+        XCTAssertTrue(ended, "the session ends once the window is over")
         XCTAssertFalse(phone.isSpoofing)
         XCTAssertFalse(phone.isReconnecting)
         XCTAssertTrue(phone.lastErrorDetail?.contains("Fake disconnected device") == true)
@@ -272,7 +286,8 @@ final class StandaloneControlTests: XCTestCase {
                                        heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
         _ = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         engine.failSet = true
-        while !phone.isReconnecting { try await Task.sleep(for: .milliseconds(10)) }
+        let noticed = try await waitUntil { phone.isReconnecting }
+        XCTAssertTrue(noticed, "the heartbeat notices the link is down")
         await phone.stop()
         XCTAssertFalse(phone.isSpoofing)
         XCTAssertFalse(phone.isReconnecting)
