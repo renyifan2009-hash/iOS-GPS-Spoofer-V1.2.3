@@ -135,10 +135,11 @@ struct ContentView: View {
         }
         .onAppear {
             if phoneMotion == nil { phoneMotion = PhoneMotionController(phone: phone) }
-            // Lost while locked: a notification. Lost on screen: LocalDevVPN, which is the usual fix.
+            // Lost while locked: a notification. Lost on screen: LocalDevVPN, which is the usual fix,
+            // except on cellular data alone, where iOS turns it away and the message says what to do.
             phone.onConnectionLost = {
                 LocalAlerts.connectionLost()
-                LocalDevVPN.turnOnIfNeeded()
+                if !phone.onCellularOnly { LocalDevVPN.turnOnIfNeeded() }
             }
             LocalAlerts.scheduleSigningReminder(expiry: SigningStatus.expiry)
             Task { await licenses.refreshIfDue() }
@@ -281,15 +282,16 @@ struct ContentView: View {
     }
 
     /// Is LocalDevVPN on? If not, and the setting allows, open it: it turns on and comes back.
+    /// Not on cellular data alone: LocalDevVPN is likely on already, and iOS turns it away there.
     private func checkVPN(openIfOff: Bool = true) async {
         guard source == .thisPhone, phone.isSetUp else { return }
         if phone.isReconnecting {
-            if openIfOff { LocalDevVPN.turnOnIfNeeded() }
+            if openIfOff, !phone.onCellularOnly { LocalDevVPN.turnOnIfNeeded() }
             return
         }
         guard !phone.isSpoofing, !phone.isWorking else { return }
         await phone.checkLoopback()
-        if openIfOff, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
+        if openIfOff, !phone.onCellularOnly, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
     }
 
     /// Starting a location on this iPhone needs Pro (or the trial) once payments are set up.
@@ -1113,7 +1115,10 @@ private struct PhonePill: View {
         case .connecting: return ("Connecting · This iPhone", Brand.sky, false)
         case .stopping: return ("Stopping · This iPhone", Brand.warning, false)
         case .idle:
-            if phone.loopbackReachable == false { return ("Developer connection unavailable", Brand.warning, false) }
+            if phone.loopbackReachable == false {
+                return (phone.onCellularOnly ? "Needs Wi‑Fi or Airplane Mode" : "Developer connection unavailable",
+                        Brand.warning, false)
+            }
             if phone.pairingFileIsTooOld { return ("Needs a new pairing file", Brand.warning, false) }
             return ("Ready · This iPhone", Brand.live, false)
         }

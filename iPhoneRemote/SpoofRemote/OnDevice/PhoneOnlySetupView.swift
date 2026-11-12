@@ -1,3 +1,4 @@
+import PhoneOnlyCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -58,6 +59,7 @@ struct PhoneOnlySetupView: View {
                     .padding(20)
                     .animation(Brand.spring, value: phone.isSetUp)
                     .animation(Brand.spring, value: phone.loopbackReachable)
+                    .animation(Brand.spring, value: phone.onCellularOnly)
                     .animation(Brand.spring, value: phone.pairingFileIsTooOld)
                     .animation(Brand.spring, value: phone.lastError)
                     .animation(Brand.spring, value: phone.importError)
@@ -215,11 +217,14 @@ struct PhoneOnlySetupView: View {
 
     private var vpnStep: some View {
         let reachable = phone.loopbackReachable
+        let blockedByCellular = reachable == false && phone.onCellularOnly
         return step(done: phone.checkingLoopback ? nil : reachable,
                     symbol: "network.badge.shield.half.filled",
-                    title: reachable == true ? "Developer services reachable" : "Check developer connection",
+                    title: reachable == true ? "Developer services reachable"
+                        : blockedByCellular ? "Needs Wi‑Fi or Airplane Mode" : "Check developer connection",
                     detail: reachable == true
                         ? "The iPhone’s developer port answered through the local tunnel."
+                        : blockedByCellular ? TunnelFailure.cellularExplanation
                         : "Get the free LocalDevVPN app, open it and tap Connect. It lets this app reach the iPhone's own developer services, and leaves your other traffic alone.") {
             // Side by side when they fit, one above the other when not.
             ViewThatFits(in: .horizontal) {

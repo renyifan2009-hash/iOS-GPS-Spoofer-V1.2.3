@@ -280,5 +280,5 @@ don't need them.
 How it works, the command-line tool, building from source, tests and
 packaging: [docs/DEVELOPERS.md](docs/DEVELOPERS.md). The iPhone app,
 AnyWhere: [docs/IPHONE-REMOTE.md](docs/IPHONE-REMOTE.md). Its iPhone-only
-mode (beta), which works with no Mac nearby and on cellular:
+mode (beta), which works with no Mac nearby (on Wi‑Fi, or in Airplane Mode):
 [docs/PHONE-ONLY.md](docs/PHONE-ONLY.md).

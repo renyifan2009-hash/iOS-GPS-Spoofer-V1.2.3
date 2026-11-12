@@ -59,6 +59,11 @@ final class OnDeviceController {
     /// until checked.
     var loopbackReachable: Bool? { ports?.anyAnswered }
 
+    /// Cellular data is this iPhone's only network (no joined Wi‑Fi). iOS turns LocalDevVPN's connection
+    /// to the developer services away then (see `PhoneNetwork`), so the screens say so instead of
+    /// sending the person to LocalDevVPN. Kept up to date by `watchNetwork()`.
+    private(set) var onCellularOnly = false
+
     /// LocalDevVPN is on, but this iPhone only answers Remote Pairing and the
     /// pairing file was saved without that identity. A new file fixes it.
     var pairingFileIsTooOld: Bool {
@@ -97,6 +102,7 @@ final class OnDeviceController {
     // initializer. Construct production dependencies here; test injection remains explicit.
     convenience init() {
         self.init(engine: OnDeviceEngine(), pairing: PairingFile.load(), keepAlive: KeepAlive())
+        watchNetwork()
     }
 
     init(engine: any OnDeviceOperations, pairing: PairingFile?, keepAlive: any BackgroundHolding,
@@ -282,6 +288,34 @@ final class OnDeviceController {
         RemotePairingPort.remembered = port
     }
 
+    @ObservationIgnored private var networkMonitor: NWPathMonitor?
+
+    /// Follow this iPhone's network, for `onCellularOnly`.
+    private func watchNetwork() {
+        #if DEBUG
+        // For screenshots in the Simulator, which is never on cellular: `-SpoofRemoteCellularOnly YES`.
+        if UserDefaults.standard.bool(forKey: "SpoofRemoteCellularOnly") {
+            onCellularOnly = true
+            return
+        }
+        #endif
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let cellularOnly = path.status == .satisfied
+                && PhoneNetwork.isCellularOnly(path.availableInterfaces.map(\.type))
+            Task { @MainActor in self?.networkChanged(cellularOnly: cellularOnly) }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.iosgpsspoof.remote.network"))
+        networkMonitor = monitor
+    }
+
+    /// This iPhone joined or left Wi‑Fi. Tests call it directly.
+    func networkChanged(cellularOnly: Bool) {
+        guard cellularOnly != onCellularOnly else { return }
+        onCellularOnly = cellularOnly
+        if isReconnecting { lastError = reconnectingMessage }
+    }
+
     /// The routes that answered at the last check, or all the file allows if
     /// nothing was checked.
     private func knownRoutes(for record: PairingRecord) -> [TunnelRoute] {
@@ -328,7 +362,7 @@ final class OnDeviceController {
             case .ready(let ready):
                 routes = ready
             case .nothingAnswers:
-                return giveUp(TunnelFailure.unreachableExplanation)
+                return giveUp(onCellularOnly ? TunnelFailure.cellularExplanation : TunnelFailure.unreachableExplanation)
             case .fileLacksRemotePairing:
                 return giveUp(Self.pairingFileTooOldMessage)
             case .remotePairingDoesNotAnswer:
@@ -505,18 +539,26 @@ final class OnDeviceController {
             reconnectingSince = Date()
             onConnectionLost?()
         }
-        lastError = "Connection lost. Reconnecting…"
+        lastError = reconnectingMessage
         lastErrorDetail = (error as? TunnelFailure)?.detail ?? error.localizedDescription
         // Stay awake while trying: a suspended app can't reconnect.
         keepAlive.start()
         startHeartbeat()
     }
 
+    /// On cellular data alone it can't come back until there's Wi‑Fi or Airplane Mode: say so.
+    private var reconnectingMessage: String {
+        guard onCellularOnly else { return "Connection lost. Reconnecting…" }
+        return "Connection lost. iOS doesn't let LocalDevVPN reach the developer services over cellular data. "
+            + "Join Wi‑Fi, or turn on Airplane Mode with LocalDevVPN still connected, and AnyWhere reconnects."
+    }
+
     /// Reconnecting went on for the whole window: end the session and say so.
     private func lostForGood() {
         let detail = lastErrorDetail
         _ = giveUp(nil)
-        lastError = "Lost the connection, so the location stopped. Turn on LocalDevVPN, then start again."
+        lastError = "Lost the connection, so the location stopped. "
+            + (onCellularOnly ? TunnelFailure.cellularExplanation : "Turn on LocalDevVPN, then start again.")
         lastErrorDetail = detail
     }
 
@@ -557,7 +599,7 @@ final class OnDeviceController {
     /// Plain words for what went wrong, with idevice's own in the small print.
     private func show(_ error: Error) {
         if let failure = error as? TunnelFailure {
-            lastError = failure.explanation
+            lastError = failure.explanation(onCellularOnly: onCellularOnly)
             lastErrorDetail = failure.detail
         } else {
             show(error.localizedDescription)

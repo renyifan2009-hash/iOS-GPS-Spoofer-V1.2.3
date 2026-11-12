@@ -41,7 +41,7 @@ LocalDevVPN opens by itself when AnyWhere opens and the developer port doesn't a
 
 A free Apple ID signs an app for 7 days. Install AnyWhere through [SideStore](https://sidestore.io) and it is refreshed on the iPhone with no computer: in the background, and by a daily Shortcuts automation running SideStore's "Refresh All Apps". Each release publishes a SideStore source at `releases/latest/download/source.json` (made by `scripts/make-sidestore-source.py`); **Settings ▸ Add AnyWhere to SideStore** adds it, so updates show up in SideStore too. AnyWhere reads its own provisioning profile, shows when the signing ends, and reminds you a day before.
 
-Keep LocalDevVPN on. Local commands do not require Wi-Fi or a Mac; cellular behavior still needs a physical-device test. Directions and image personalization may require internet.
+Keep LocalDevVPN on. Local commands do not need a Mac, but they do need Wi‑Fi or Airplane Mode: on cellular data alone, iOS doesn't let LocalDevVPN reach the developer services ([jkcoxson/LocalDevVPN#31](https://github.com/jkcoxson/LocalDevVPN/issues/31)). With no Wi‑Fi around, connect LocalDevVPN first, then turn on Airplane Mode. Directions and image personalization may require internet.
 
 ## When something fails
 

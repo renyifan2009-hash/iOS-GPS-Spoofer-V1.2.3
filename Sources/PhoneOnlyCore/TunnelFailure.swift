@@ -158,10 +158,22 @@ public struct TunnelFailure: Error, Equatable, Sendable, LocalizedError {
         return "\(step.title) didn't work: \(message)"
     }
 
+    /// `explanation`, unless the iPhone couldn't be reached while cellular data was its only network:
+    /// then the reason is that, not LocalDevVPN (see `PhoneNetwork`).
+    public func explanation(onCellularOnly: Bool) -> String {
+        onCellularOnly && isUnreachable ? Self.cellularExplanation : explanation
+    }
+
     /// Also the message when nothing answers before a connection is tried.
-    public static let unreachableExplanation = "Can't reach this iPhone's developer services at 10.7.0.1. This does not mean LocalDevVPN is off. "
-        + "Check its Device IP and AnyWhere's Local Network permission. If this happens after switching "
-        + "cellular or Wi-Fi, reconnect LocalDevVPN and try again. The last simulated location may remain."
+    public static let unreachableExplanation = "Can't reach this iPhone's developer services at 10.7.0.1. Open LocalDevVPN "
+        + "and check that it says Connected, with Device IP 10.7.0.1, or turn it off and on. Then try again. "
+        + "If it still fails, allow AnyWhere in Settings ▸ Privacy & Security ▸ Local Network."
+
+    /// The message when nothing answers and cellular data is the iPhone's only network: iOS turns
+    /// LocalDevVPN's connection away then, so checking LocalDevVPN would not help.
+    public static let cellularExplanation = "This iPhone is on cellular data, and iOS doesn't let LocalDevVPN reach "
+        + "the developer services over cellular. Join Wi‑Fi, or keep LocalDevVPN connected and turn on Airplane Mode. "
+        + "Then try again."
 
     /// The small print: enough for a bug report to say exactly what failed,
     /// one line for each route tried.
