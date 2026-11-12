@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import XCTest
 @testable import PhoneOnlyCore
 
@@ -25,6 +26,25 @@ final class TunnelFailureTests: XCTestCase {
                               #"Socket(Os { code: 61, kind: ConnectionRefused, message: "Connection refused" })"#)
         XCTAssertTrue(lockdown.isUnreachable)
         XCTAssertEqual(lockdown.explanation, TunnelFailure.unreachableExplanation)
+    }
+
+    func testOnCellularDataAloneTheMessageSaysSoInsteadOfBlamingLocalDevVPN() {
+        let refused = tunnel(remotePairing, code: 16, #"InternalError("connect: device socket io failed")"#)
+        XCTAssertEqual(refused.explanation(onCellularOnly: true), TunnelFailure.cellularExplanation)
+        XCTAssertEqual(refused.explanation(onCellularOnly: false), TunnelFailure.unreachableExplanation)
+        // Only not reaching the iPhone is cellular's doing: a pairing the iPhone turns down is still that.
+        let denied = tunnel(remotePairing, code: 31, "UserDeniedPairing")
+        XCTAssertFalse(denied.isUnreachable)
+        XCTAssertEqual(denied.explanation(onCellularOnly: true), denied.explanation)
+    }
+
+    func testCellularOnlyMeansNoJoinedWiFiOrWire() {
+        XCTAssertTrue(PhoneNetwork.isCellularOnly([.cellular]))
+        XCTAssertTrue(PhoneNetwork.isCellularOnly([.other, .cellular]), "LocalDevVPN's own tunnel doesn't count")
+        XCTAssertFalse(PhoneNetwork.isCellularOnly([.wifi, .cellular]))
+        XCTAssertFalse(PhoneNetwork.isCellularOnly([.wiredEthernet, .cellular]))
+        XCTAssertFalse(PhoneNetwork.isCellularOnly([.wifi]))
+        XCTAssertFalse(PhoneNetwork.isCellularOnly([]), "Airplane Mode")
     }
 
     func testTheIPhoneTurnsTheIdentityDown() {

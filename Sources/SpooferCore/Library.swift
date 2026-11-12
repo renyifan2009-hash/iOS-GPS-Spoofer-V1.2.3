@@ -1,4 +1,5 @@
 import Foundation
+import PhoneOnlyCore
 
 /// A named place: a favorite, or an entry in the recent-locations history.
 public struct SavedPlace: Codable, Identifiable, Hashable, Sendable {

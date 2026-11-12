@@ -263,6 +263,55 @@ final class StandaloneControlTests: XCTestCase {
         await phone.stop()
     }
 
+    func testOnCellularDataAloneStartSaysSoInsteadOfBlamingLocalDevVPN() async throws {
+        let engine = FakeDevice()
+        // 10.7.0.1 turns every port away, as it does on cellular data.
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { DeveloperPorts() }, recoveryDelay: .milliseconds(10))
+        phone.networkChanged(cellularOnly: true)
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
+        XCTAssertFalse(started)
+        XCTAssertEqual(engine.attempts, 0, "nothing answered, so no connection is tried")
+        XCTAssertEqual(phone.lastError, TunnelFailure.cellularExplanation)
+        phone.networkChanged(cellularOnly: false)
+        let again = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
+        XCTAssertFalse(again)
+        XCTAssertEqual(phone.lastError, TunnelFailure.unreachableExplanation)
+    }
+
+    func testReconnectingOnCellularDataSaysWhatBringsItBack() async throws {
+        let engine = FakeDevice()
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
+        XCTAssertTrue(started)
+        engine.failSet = true
+        let noticed = try await waitUntil { phone.isReconnecting }
+        XCTAssertTrue(noticed)
+        XCTAssertEqual(phone.lastError, "Connection lost. Reconnecting…")
+        phone.networkChanged(cellularOnly: true)
+        XCTAssertTrue(phone.lastError?.contains("Airplane Mode") == true, "says what brings it back")
+        phone.networkChanged(cellularOnly: false)
+        XCTAssertEqual(phone.lastError, "Connection lost. Reconnecting…")
+        await phone.stop()
+    }
+
+    func testEachLegsTypicalSpeedCoversItsStretchThereAndBack() throws {
+        let a = StandaloneRoute.Point(37.0, -122.0)
+        let b = StandaloneRoute.Point(37.0, -121.99), c = StandaloneRoute.Point(37.01, -121.99)
+        let ab = StandaloneRoute.distance(a, b), bc = StandaloneRoute.distance(b, c)
+        let once = PhoneMotionController.legZones([[a, b], [b, c]], cruise: [10, nil], pingPong: false)
+        XCTAssertEqual(once.count, 1, "a straight leg has no typical speed")
+        XCTAssertEqual(once[0].end, ab, accuracy: 0.01)
+        let both = PhoneMotionController.legZones([[a, b], [b, c]], cruise: [10, 20], pingPong: true)
+        XCTAssertEqual(both.map(\.speed), [10, 20, 20, 10])
+        XCTAssertEqual(both.last?.end ?? 0, 2 * (ab + bc), accuracy: 0.01)
+        // The same metres the route counts.
+        let route = try StandaloneRoute(legs: [[a, b], [b, c]], waits: [0, 0, 0], speed: 10, repeatMode: "pingPong")
+        XCTAssertEqual(route.passMeters, both.last?.end ?? 0, accuracy: 0.5)
+    }
+
     func testReconnectingGivesUpAfterItsWindow() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),

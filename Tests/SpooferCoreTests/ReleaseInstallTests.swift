@@ -40,7 +40,8 @@ final class ReleaseInstallTests: XCTestCase {
         return app
     }
 
-    private func makeDMG(containing folder: URL, name: String = "test.dmg") throws -> URL {
+    /// Each disk image has a name of its own, so one a failed test left open can't be mistaken for another's.
+    private func makeDMG(containing folder: URL, name: String = "test-\(UUID().uuidString.prefix(8)).dmg") throws -> URL {
         let dmg = root.appendingPathComponent(name)
         let make = try ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/hdiutil"),
                                          arguments: ["create", "-volname", "AnyWhere", "-srcfolder", folder.path, "-ov", "-format", "UDZO", dmg.path, "-quiet"],
@@ -133,6 +134,26 @@ final class ReleaseInstallTests: XCTestCase {
         // The disk image is closed again.
         let info = try ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/hdiutil"), arguments: ["info"], timeout: 30)
         XCTAssertFalse(info.stdout.contains(dmg.lastPathComponent), "the DMG should be detached")
+        XCTAssertEqual(ReleaseInstall.attachedDevices(of: dmg), [])
+    }
+
+    /// What `stage` cleans up with: the devices open from one image, found by its path.
+    func testFindsTheDevicesOpenFromADiskImage() throws {
+        let source = root.appendingPathComponent("src")
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try makeApp(at: source)
+        let dmg = try makeDMG(containing: source)
+        let mount = root.appendingPathComponent("mnt")
+        try fm.createDirectory(at: mount, withIntermediateDirectories: true)
+        let attach = try ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/hdiutil"),
+                                           arguments: ["attach", dmg.path, "-nobrowse", "-readonly", "-noverify",
+                                                       "-mountpoint", mount.path, "-quiet"], timeout: 120)
+        try XCTSkipIf(attach.status != 0, "hdiutil couldn't open a disk image here")
+        let devices = ReleaseInstall.attachedDevices(of: dmg)
+        XCTAssertEqual(devices.count, 1)
+        XCTAssertTrue(devices.first?.hasPrefix("/dev/disk") == true)
+        ReleaseInstall.detachAll(of: dmg)
+        XCTAssertEqual(ReleaseInstall.attachedDevices(of: dmg), [], "closed")
     }
 
     func testAFailingSelfTestLeavesNothingBehind() throws {

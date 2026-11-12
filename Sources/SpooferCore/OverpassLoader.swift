@@ -1,22 +1,5 @@
 import Foundation
-
-/// A point from OpenStreetMap with its tags.
-public struct OSMNode: Sendable, Equatable {
-    public var id: Int64
-    public var point: GeoPoint
-    public var tags: [String: String]
-
-    public init(id: Int64, point: GeoPoint, tags: [String: String]) {
-        self.id = id
-        self.point = point
-        self.tags = tags
-    }
-}
-
-public struct OverpassAnswer: Sendable, Equatable {
-    public var nodes: [OSMNode]
-    public var ways: [OSMWay]
-}
+import PhoneOnlyCore
 
 /// Loads traffic lights, stop and yield signs, signal crossings, speed bumps and
 /// speed limits near a route from OpenStreetMap's public Overpass API: in pieces
@@ -26,11 +9,7 @@ public struct OverpassLoader: Sendable {
 
     /// Public Overpass instances: the main one first, then others for when it's
     /// busy or unreachable (some networks and VPNs can't reach every one).
-    public static let endpoints = [
-        URL(string: "https://overpass-api.de/api/interpreter")!,
-        URL(string: "https://maps.mail.ru/osm/tools/overpass/api/interpreter")!,
-        URL(string: "https://overpass.private.coffee/api/interpreter")!,
-    ]
+    public static let endpoints = OverpassQuery.endpoints
 
     /// Seconds to wait for one server before trying the next.
     static let requestTimeout: TimeInterval = 25
@@ -147,27 +126,11 @@ public struct OverpassLoader: Sendable {
     /// Pieces of at most 15 km, simplified to 150 points or fewer; `padding`
     /// widens the search by how far the simplified line may stray.
     static func chunks(of path: RoutePath) -> [(points: [GeoPoint], padding: Double)] {
-        guard path.points.count >= 2 else { return [] }
-        var chunks: [(points: [GeoPoint], padding: Double)] = []
-        var start = 0
-        while start < path.points.count - 1 {
-            var end = start + 1
-            while end < path.points.count - 1, path.cumulative[end] - path.cumulative[start] < 15_000 { end += 1 }
-            let piece = Array(path.points[start...end])
-            var tolerance = 2.0
-            var simple = RouteSimplifier.simplify(piece, tolerance: tolerance)
-            while simple.count > 150 && tolerance < 200 {
-                tolerance *= 1.6
-                simple = RouteSimplifier.simplify(piece, tolerance: tolerance)
-            }
-            chunks.append((simple, tolerance))
-            start = end
-        }
-        return chunks
+        OverpassQuery.chunks(of: path)
     }
 
     static func query(for points: [GeoPoint], padding: Double, roads: Bool) -> String {
-        let line = points.map { String(format: "%.6f,%.6f", $0.latitude, $0.longitude) }.joined(separator: ",")
+        let line = OverpassQuery.line(points)
         func r(_ base: Double) -> Int { Int((base + padding).rounded(.up)) }
         var parts = [
             "node(around:\(r(signalRadius)),\(line))[highway=traffic_signals];",
@@ -176,59 +139,17 @@ public struct OverpassLoader: Sendable {
             "node(around:\(r(signRadius)),\(line))[traffic_calming~\"^(bump|hump|table|cushion|yes)$\"];",
         ]
         if roads {
-            parts.append("way(around:\(r(roadRadius)),\(line))"
-                + "[highway~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|road)(_link)?$\"];")
+            parts.append(OverpassQuery.roadClause(radius: r(roadRadius), line: line))
         }
         return "[out:json][timeout:25];(" + parts.joined() + ");out geom;"
     }
 
     public static func parse(_ data: Data) throws -> OverpassAnswer {
-        struct Element: Decodable {
-            struct LatLon: Decodable {
-                let lat: Double
-                let lon: Double
-            }
-            let type: String
-            let id: Int64
-            let lat: Double?
-            let lon: Double?
-            let tags: [String: String]?
-            let geometry: [LatLon?]?
-            let nodes: [Int64]?
+        do {
+            return try OverpassAnswer.decode(data)
+        } catch let problem as OverpassAnswer.Remark {
+            throw SpoofError("OpenStreetMap couldn't answer: \(problem.text)")
         }
-        struct Answer: Decodable {
-            let elements: [Element]
-            let remark: String?
-        }
-        let answer = try JSONDecoder().decode(Answer.self, from: data)
-        if let remark = answer.remark, remark.lowercased().contains("error") {
-            throw SpoofError("OpenStreetMap couldn't answer: \(remark)")
-        }
-        var nodes: [OSMNode] = []
-        var ways: [OSMWay] = []
-        for element in answer.elements {
-            switch element.type {
-            case "node":
-                guard let lat = element.lat, let lon = element.lon else { continue }
-                nodes.append(OSMNode(id: element.id, point: GeoPoint(lat, lon), tags: element.tags ?? [:]))
-            case "way":
-                let geometry = element.geometry ?? []
-                let refs = element.nodes ?? []
-                var points: [GeoPoint] = []
-                var ids: [Int64] = []
-                for (i, entry) in geometry.enumerated() {
-                    guard let entry else { continue }
-                    points.append(GeoPoint(entry.lat, entry.lon))
-                    if refs.count == geometry.count { ids.append(refs[i]) }
-                }
-                guard points.count >= 2 else { continue }
-                ways.append(OSMWay(id: element.id, points: points, tags: element.tags ?? [:],
-                                   nodeIDs: ids.count == points.count ? ids : []))
-            default:
-                continue
-            }
-        }
-        return OverpassAnswer(nodes: nodes, ways: ways)
     }
 
     /// What a node is, how near the route it must be (metres), and for traffic

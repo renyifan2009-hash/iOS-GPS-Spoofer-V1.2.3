@@ -36,11 +36,10 @@ struct RouteStopPin: View {
     }
 }
 
-/// Short, locale-aware text for lengths and times.
+/// Short text for lengths and times, in the unit picked in Settings (or the region's).
 enum RouteText {
     static func distance(_ meters: Double) -> String {
-        Measurement(value: meters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road, numberFormatStyle: .number.precision(.fractionLength(0...1))))
+        SpeedUnits.current.distanceText(meters: meters)
     }
 
     static func duration(_ seconds: Double) -> String {
@@ -72,6 +71,8 @@ struct RouteCardView: View {
     @State private var editStartWait = false
     @State private var askName = false
     @State private var nameText = ""
+    /// Redraws this view when Settings switches miles and kilometres.
+    @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
 
     private var units: SpeedUnits { .current }
 
@@ -100,7 +101,7 @@ struct RouteCardView: View {
         }
         .sheet(isPresented: $editStartWait) {
             WaitEditorSheet(title: "Leave after", prompt: "How long to wait at the start before leaving.",
-                            initial: route.startWait, zeroLabel: "Leave now") { seconds in
+                            initial: route.startWait, zeroLabel: "Leave now", showsLeaveTime: true) { seconds in
                 withAnimation(Brand.snappy) { route.setStartWait(seconds) }
             }
         }
@@ -208,20 +209,34 @@ struct RouteCardView: View {
             if route.driving, connection.executionName == "Mac" {
                 Toggle("Slower in rush hour", isOn: $route.timeOfDayTraffic)
             }
+            if followsLimitsHere {
+                Toggle("Drive at the speed limit", isOn: $route.followSpeedLimits)
+            }
 
             HStack(spacing: 12) {
                 Text("Speed")
                 Slider(value: speedInShownUnits, in: units.routeRange(driving: route.driving),
                        step: units.routeStep(driving: route.driving))
-                    .accessibilityLabel("Top speed")
+                    .accessibilityLabel(followsLimitsHere && route.followSpeedLimits
+                                        ? "Speed where the limit isn't known" : "Top speed")
                     .accessibilityValue(units.text(kmh: route.speedKmh))
                 Text(units.text(kmh: route.speedKmh))
                     .font(.system(.subheadline, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 58, alignment: .trailing)
             }
+            if followsLimitsHere && route.followSpeedLimits {
+                Text("Speed is for roads with no known limit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .font(.subheadline)
+    }
+
+    /// Speed limits come into it when this iPhone drives like a person (the Mac's routes don't have road data yet).
+    private var followsLimitsHere: Bool {
+        route.driving && route.natural && route.followRoads && connection.executionName != "Mac"
     }
 
     /// A Mac before protocol version 2 drives a one-way route straight off, whatever the start's wait says.
@@ -299,6 +314,8 @@ struct RouteCardView: View {
 struct RouteProgressCardView: View {
     var route: RouteDraft
     var connection: any ControlTarget
+    /// Redraws this view when Settings switches miles and kilometres.
+    @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
 
     private var status: RemoteStatus? { connection.status }
     private var planning: Bool { status?.activity == "planning" }

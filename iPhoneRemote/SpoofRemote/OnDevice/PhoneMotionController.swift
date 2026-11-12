@@ -116,7 +116,9 @@ final class PhoneMotionController: ControlTarget {
     }
 
     @discardableResult
-    func driveRoute(_ request: RouteRequest) async -> Bool {
+    /// With `followSpeedLimits` (driving like a person on roads), it looks up each road's limit while it
+    /// plans and drives at about that; where none is found it uses the request's speed.
+    func driveRoute(_ request: RouteRequest, followSpeedLimits: Bool = false) async -> Bool {
         guard !isWorking, request.isValid, request.waypoints.count <= SavedRoute.maxStops else { return false }
         cancelMotion()
         let token = generation
@@ -131,6 +133,8 @@ final class PhoneMotionController: ControlTarget {
                 waypoints.append(.init(latitude: first.latitude, longitude: first.longitude))
             }
             var legs: [[StandaloneRoute.Point]] = []
+            /// Apple Maps' typical cruise for each leg (nil for a straight leg).
+            var legCruise: [Double?] = []
             for index in 1..<waypoints.count {
                 guard token == generation else { return false }
                 let a = StandaloneRoute.Point(waypoints[index - 1].latitude, waypoints[index - 1].longitude)
@@ -138,18 +142,31 @@ final class PhoneMotionController: ControlTarget {
                 if request.followRoads, StandaloneRoute.distance(a, b) > 0.01 {
                     let leg = try await roadLeg(from: a, to: b, driving: request.travelMode == "driving")
                     guard token == generation else { return false }
-                    legs.append(leg)
-                } else { legs.append([a, b]) }
+                    legs.append(leg.points)
+                    legCruise.append(leg.expectedSeconds.flatMap { SpeedZone.cruise(meters: leg.meters, expectedSeconds: $0) })
+                } else {
+                    legs.append([a, b])
+                    legCruise.append(nil)
+                }
             }
             let route = try StandaloneRoute(legs: legs, waits: waypoints.map { $0.wait ?? 0 },
                                             speed: request.speed, repeatMode: request.loopMode)
             guard token == generation else { return false }
+            let driving = request.travelMode == "driving"
+            var limits: [SpeedZone] = []
+            if followSpeedLimits, driving, request.realistic, request.followRoads {
+                let roads = await Self.speedLimits.zones(along: route.passPath.map { GeoPoint($0.latitude, $0.longitude) })
+                guard token == generation else { return false }
+                // Where OpenStreetMap has no limit (or its servers are busy): Apple Maps' typical speed for the leg.
+                limits = SpeedZone.merged(primary: roads, fallback: Self.legZones(legs, cruise: legCruise,
+                                                                                    pingPong: request.loopMode == "pingPong"))
+            }
             let first = route.start
             guard await settle(), token == generation else { return false }
             guard await phone.set(.init(latitude: first.latitude, longitude: first.longitude), name: request.name),
                   token == generation else { return false }
             activity = "route"; progress = 0; paused = false; lastError = nil; anchor = nil
-            runRoute(route, natural: request.realistic, driving: request.travelMode == "driving", token: token)
+            runRoute(route, natural: request.realistic, driving: driving, limits: limits, token: token)
             return true
         } catch {
             if token == generation { lastError = "Couldn't plan this route on the iPhone: \(error.localizedDescription)" }
@@ -157,7 +174,28 @@ final class PhoneMotionController: ControlTarget {
         }
     }
 
-    private func roadLeg(from a: StandaloneRoute.Point, to b: StandaloneRoute.Point, driving: Bool) async throws -> [StandaloneRoute.Point] {
+    /// Road speed limits from OpenStreetMap's public Overpass servers: only the route's own path is sent.
+    private static let speedLimits = RoadSpeedLimits(
+        userAgent: "AnyWhere-iPhone (+https://github.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3)", timeBudget: 10)
+
+    /// Each leg's cruise as a stretch of one pass (metres the way `StandaloneRoute` counts them), there and
+    /// back for a ping-pong route.
+    static func legZones(_ legs: [[StandaloneRoute.Point]], cruise: [Double?], pingPong: Bool) -> [SpeedZone] {
+        var zones: [SpeedZone] = []
+        var at = 0.0
+        func add(_ points: [StandaloneRoute.Point], _ speed: Double?) {
+            let length = zip(points, points.dropFirst()).reduce(0) { $0 + StandaloneRoute.distance($1.0, $1.1) }
+            if let speed, length > 0 { zones.append(SpeedZone(start: at, end: at + length, speed: speed)) }
+            at += length
+        }
+        for (leg, speed) in zip(legs, cruise) { add(leg, speed) }
+        if pingPong { for (leg, speed) in zip(legs, cruise).reversed() { add(leg.reversed(), speed) } }
+        return zones
+    }
+
+    /// A road leg from Apple Maps: its points, its length and how long Apple expects it to take.
+    private func roadLeg(from a: StandaloneRoute.Point, to b: StandaloneRoute.Point, driving: Bool) async throws
+        -> (points: [StandaloneRoute.Point], meters: Double, expectedSeconds: Double?) {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: .init(latitude: a.latitude, longitude: a.longitude)))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: .init(latitude: b.latitude, longitude: b.longitude)))
@@ -170,7 +208,7 @@ final class PhoneMotionController: ControlTarget {
         return try await withCheckedThrowingContinuation { continuation in
             directions.calculate { response, error in
                 if let error { continuation.resume(throwing: error); return }
-                guard let polyline = response?.routes.first?.polyline, polyline.pointCount >= 2,
+                guard let best = response?.routes.first, case let polyline = best.polyline, polyline.pointCount >= 2,
                       polyline.pointCount <= 100_000 else {
                     continuation.resume(throwing: StandaloneRoute.Problem.invalid)
                     return
@@ -178,7 +216,9 @@ final class PhoneMotionController: ControlTarget {
                 var coordinates = [CLLocationCoordinate2D](repeating: .init(), count: polyline.pointCount)
                 polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: polyline.pointCount))
                 // Explicit endpoints preserve the chosen stops and continuity between legs.
-                continuation.resume(returning: [a] + coordinates.map { StandaloneRoute.Point($0.latitude, $0.longitude) } + [b])
+                let seconds = best.expectedTravelTime
+                continuation.resume(returning: ([a] + coordinates.map { StandaloneRoute.Point($0.latitude, $0.longitude) } + [b],
+                                                best.distance, seconds > 0 ? seconds : nil))
             }
         }
     }
@@ -186,9 +226,9 @@ final class PhoneMotionController: ControlTarget {
     /// Play the route. With `natural` on (Drive like a real person) the car eases off and on, slows for
     /// corners, stops at some lights and signs, and the GPS wobbles a few metres like a real phone's;
     /// off, it keeps to the selected speed on a clean line.
-    private func runRoute(_ route: StandaloneRoute, natural: Bool, driving: Bool, token: Int) {
+    private func runRoute(_ route: StandaloneRoute, natural: Bool, driving: Bool, limits: [SpeedZone], token: Int) {
         runner = Task { [weak self] in
-            var drive = NaturalDrive(route: route, driving: driving)
+            var drive = NaturalDrive(route: route, driving: driving, speedLimits: natural ? limits : [])
             var wobble = GPSWobble(size: natural ? (driving ? 3.5 : 3) : 0)
             var elapsed = 0.0
             var previous = ContinuousClock.now

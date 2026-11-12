@@ -78,7 +78,7 @@ public enum SpoofRemote {
     /// against iPhoneRemote/project.yml (MARKETING_VERSION and
     /// CURRENT_PROJECT_VERSION), so the two never drift apart. Bump the build
     /// here and in project.yml together when SpoofRemote changes.
-    public static let expected = SpoofRemoteVersion(marketing: [1, 3], build: 6)
+    public static let expected = SpoofRemoteVersion(marketing: [1, 3, 1], build: 7)
 
     /// Where to send someone whose SpoofRemote is out of date.
     public static let releasesLatestURL = Repository.releasesLatestURL

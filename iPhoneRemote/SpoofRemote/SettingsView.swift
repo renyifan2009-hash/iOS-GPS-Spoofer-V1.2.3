@@ -1,3 +1,4 @@
+import PhoneOnlyCore
 import SwiftUI
 
 /// Everything that isn't moving the location: where it's controlled from, staying on when locked,
@@ -13,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(LocalDevVPN.autoOpenKey) private var autoOpenVPN = true
     @AppStorage(KeepAwakeSettings.silentAudioKey) private var silentAudio = true
     @AppStorage(NaturalSettings.holdWobbleKey) private var holdWobble = true
+    @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
     @State private var showPhoneSetup = false
     @State private var showPairing = false
     @State private var showPaywall = false
@@ -60,7 +62,7 @@ struct SettingsView: View {
                     } header: {
                         Text("Feels real")
                     } footer: {
-                        Text("Stay on when locked plays silence alongside your other audio, so iOS doesn't pause AnyWhere and drop your location. Natural GPS lets a held place drift a few metres like a real phone's.")
+                        Text("Stay on when locked plays silence alongside your other audio, so iOS doesn't pause AnyWhere and drop your location. Natural GPS lets a held place drift a few meters like a real phone's.")
                     }
                 } else {
                     Section("Mac") {
@@ -69,6 +71,18 @@ struct SettingsView: View {
                                 value: connection.server?.name)
                         }
                     }
+                }
+
+                Section {
+                    Picker(selection: $unitsChoice) {
+                        Text("Automatic").tag(UnitsChoice.automatic)
+                        Text("Miles").tag(UnitsChoice.miles)
+                        Text("Kilometers").tag(UnitsChoice.kilometers)
+                    } label: {
+                        Label("Distance & Speed", systemImage: "ruler")
+                    }
+                } footer: {
+                    Text("Automatic uses this iPhone's region, which is set to \(SpeedUnits(region: SpeedUnits.deviceRegion).imperial ? "miles" : "kilometers") (Settings ▸ General ▸ Language & Region ▸ Measurement System).")
                 }
 
                 proSection

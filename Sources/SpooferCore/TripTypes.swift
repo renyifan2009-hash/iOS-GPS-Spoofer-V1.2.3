@@ -338,20 +338,6 @@ public struct RoadFeature: Sendable, Equatable, Codable {
     }
 }
 
-/// A stretch of road with a speed limit.
-public struct SpeedZone: Sendable, Equatable, Codable {
-    public var start: Double
-    public var end: Double
-    /// m/s.
-    public var speed: Double
-
-    public init(start: Double, end: Double, speed: Double) {
-        self.start = start
-        self.end = end
-        self.speed = speed
-    }
-}
-
 /// What OpenStreetMap knows about a route's roads, by distance along it.
 public struct RoadFeatures: Sendable, Equatable, Codable {
     public var features: [RoadFeature]

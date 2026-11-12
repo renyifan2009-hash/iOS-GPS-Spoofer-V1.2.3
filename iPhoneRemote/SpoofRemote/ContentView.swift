@@ -34,6 +34,10 @@ struct ContentView: View {
     @State private var showPhoneSetup = false
     @State private var showSettings = false
     @State private var showPaywall = false
+    #if DEBUG
+    /// `-SpoofRemoteShow autoStop`: the Stop After sheet, for screenshots.
+    @State private var showAutoStopDemo = false
+    #endif
     /// A pairing file that came in an `anywhere://pairingfile` link, waiting for the person to say yes.
     /// Any page or app can open such a link, so it never replaces the working file on its own.
     @State private var offeredPairing: Data?
@@ -84,6 +88,9 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        #if DEBUG
+        .sheet(isPresented: $showAutoStopDemo) { AutoStopSheet(connection: connection) }
+        #endif
         .sheet(isPresented: $showPaywall) {
             PaywallView()
         }
@@ -128,10 +135,11 @@ struct ContentView: View {
         }
         .onAppear {
             if phoneMotion == nil { phoneMotion = PhoneMotionController(phone: phone) }
-            // Lost while locked: a notification. Lost on screen: LocalDevVPN, which is the usual fix.
+            // Lost while locked: a notification. Lost on screen: LocalDevVPN, which is the usual fix,
+            // except on cellular data alone, where iOS turns it away and the message says what to do.
             phone.onConnectionLost = {
                 LocalAlerts.connectionLost()
-                LocalDevVPN.turnOnIfNeeded()
+                if !phone.onCellularOnly { LocalDevVPN.turnOnIfNeeded() }
             }
             LocalAlerts.scheduleSigningReminder(expiry: SigningStatus.expiry)
             Task { await licenses.refreshIfDue() }
@@ -184,6 +192,8 @@ struct ContentView: View {
                 showSettings = true
             case "paywall":
                 showPaywall = true
+            case "autoStop":
+                showAutoStopDemo = true
             case "applePark":
                 // Just the map, at Apple Park with a pin (for screenshots): nothing is started.
                 let place = Place(name: "Apple Park", subtitle: "Cupertino, CA", latitude: 37.3349, longitude: -122.0090)
@@ -272,15 +282,16 @@ struct ContentView: View {
     }
 
     /// Is LocalDevVPN on? If not, and the setting allows, open it: it turns on and comes back.
+    /// Not on cellular data alone: LocalDevVPN is likely on already, and iOS turns it away there.
     private func checkVPN(openIfOff: Bool = true) async {
         guard source == .thisPhone, phone.isSetUp else { return }
         if phone.isReconnecting {
-            if openIfOff { LocalDevVPN.turnOnIfNeeded() }
+            if openIfOff, !phone.onCellularOnly { LocalDevVPN.turnOnIfNeeded() }
             return
         }
         guard !phone.isSpoofing, !phone.isWorking else { return }
         await phone.checkLoopback()
-        if openIfOff, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
+        if openIfOff, !phone.onCellularOnly, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
     }
 
     /// Starting a location on this iPhone needs Pro (or the trial) once payments are set up.
@@ -765,13 +776,15 @@ struct ContentView: View {
                         RouteProgressCardView(route: route, connection: motion)
                     } else {
                         RouteCardView(route: route, connection: motion, library: routeLibrary)
-                        Text(route.natural ? "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
-                               : "This iPhone follows the route at the selected speed, with waits at your stops.")
+                        Text(phoneRouteNote)
                             .font(.footnote).foregroundStyle(.secondary)
                         Button {
                             guard requirePro(), let request = route.request() else { return }
                             let snapshot = route.snapshot(named: route.name ?? "iPhone route")
-                            Task { if await motion.driveRoute(request) { routeLibrary.recordRecent(snapshot) } }
+                            let limits = route.driving && route.natural && route.followRoads && route.followSpeedLimits
+                            Task {
+                                if await motion.driveRoute(request, followSpeedLimits: limits) { routeLibrary.recordRecent(snapshot) }
+                            }
                         } label: { Label("Drive Route", systemImage: "play.fill").frame(maxWidth: .infinity) }
                         .prominentButton()
                         .disabled(!route.canDrive || motion.isWorking)
@@ -903,6 +916,16 @@ struct ContentView: View {
             }
         }
         .disabled(phone.isWorking)
+    }
+
+    /// Under the iPhone's route card: how it will drive.
+    private var phoneRouteNote: String {
+        guard route.natural else { return "This iPhone follows the route at the selected speed, with waits at your stops." }
+        guard route.driving, route.followRoads, route.followSpeedLimits else {
+            return "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
+        }
+        return "This iPhone drives each road at about its speed limit (OpenStreetMap's), easing off for corners and "
+            + "stopping at some lights."
     }
 
     private func setPhone(_ place: Place) {
@@ -1092,7 +1115,10 @@ private struct PhonePill: View {
         case .connecting: return ("Connecting · This iPhone", Brand.sky, false)
         case .stopping: return ("Stopping · This iPhone", Brand.warning, false)
         case .idle:
-            if phone.loopbackReachable == false { return ("Developer connection unavailable", Brand.warning, false) }
+            if phone.loopbackReachable == false {
+                return (phone.onCellularOnly ? "Needs Wi‑Fi or Airplane Mode" : "Developer connection unavailable",
+                        Brand.warning, false)
+            }
             if phone.pairingFileIsTooOld { return ("Needs a new pairing file", Brand.warning, false) }
             return ("Ready · This iPhone", Brand.live, false)
         }

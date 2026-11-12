@@ -48,7 +48,8 @@ struct CountdownWheel: UIViewRepresentable {
     }
 }
 
-/// "Stop automatically after…": spin the wheel (up to 12 hours) or tap a quick time, then Start.
+/// "Stop automatically after…", laid out like the Clock app's Add Alarm sheet: ✕ and ✓ at the top, the timer
+/// wheel (up to 12 hours), a quick-time menu and the clock time it ends. ✓ starts the timer.
 struct AutoStopSheet: View {
     var connection: any ControlTarget
     @Environment(\.dismiss) private var dismiss
@@ -56,57 +57,43 @@ struct AutoStopSheet: View {
 
     private static let quick: [Double] = [900, 1800, 3600, 7200, 4 * 3600, 8 * 3600, 12 * 3600]
 
+    private var minutes: Int { Int((seconds / 60).rounded()) }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 18) {
-                Text("Your real location comes back by itself when the timer ends.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                CountdownWheel(seconds: $seconds)
-                    .frame(height: 216)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.quick, id: \.self) { value in
-                            Button {
-                                withAnimation(Brand.snappy) { seconds = value }
-                            } label: {
-                                Text(WaitDuration.short(value))
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 14)
-                                    .frame(minHeight: 36)
-                                    .foregroundStyle(abs(seconds - value) < 30 ? Color.white : Color.primary)
-                                    .background(abs(seconds - value) < 30 ? AnyShapeStyle(Brand.indigo)
-                                                                         : AnyShapeStyle(Color.primary.opacity(0.07)),
-                                                in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                Spacer(minLength: 0)
-                Button {
-                    let minutes = Int((seconds / 60).rounded())
-                    Task { await connection.setAutoStop(minutes: minutes) }
-                    dismiss()
-                } label: {
-                    Text("Start Timer · \(Killswitch.label(minutes: Int((seconds / 60).rounded())))")
+            List {
+                Section {
+                    CountdownWheel(seconds: $seconds)
+                        .frame(height: 216)
                         .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                        .accessibilityLabel("Stop after")
                 }
-                .prominentButton()
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+                Section {
+                    QuickTimeRow(seconds: Binding(get: { seconds },
+                                                  set: { value in withAnimation(Brand.snappy) { seconds = value } }),
+                                 choices: Self.quick)
+                    TimelineView(.everyMinute) { context in
+                        LabeledContent("Ends At",
+                                       value: (context.date + Double(minutes * 60)).formatted(date: .omitted, time: .shortened))
+                    }
+                } footer: {
+                    Text("Your real location comes back by itself when the timer ends.")
+                }
             }
-            .padding(.top, 8)
-            .navigationTitle("Stop After")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            }
+            .listStyle(.insetGrouped)
+            .listSectionSpacing(.compact)
+            .contentMargins(.top, 0, for: .scrollContent)
+            .alarmSheetToolbar(title: "Stop After", confirmLabel: "Start Timer, \(Killswitch.label(minutes: minutes))",
+                               onCancel: { dismiss() }, onConfirm: start)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .presentationDetents([.large])
+    }
+
+    private func start() {
+        let minutes = minutes
+        Task { await connection.setAutoStop(minutes: minutes) }
+        dismiss()
     }
 }
