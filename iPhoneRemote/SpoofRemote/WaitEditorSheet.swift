@@ -98,12 +98,19 @@ struct WaitEditorSheet: View {
             guard let typed else { return }
             if typed == 0 { noWait = true; return }
             noWait = false
-            if typed <= Self.wheelMax { wheel = max(60, typed) }
+            // Past the wheel's 12 hours, it rests at its end and the typed time is what counts.
+            wheel = min(max(60, typed), Self.wheelMax)
         }
         .onChange(of: wheel) {
-            // Spinning the wheel picks a wait, so it isn't "Leave now" any more; after typing, the wheel wins.
-            if noWait, typed != 0 { withAnimation(Brand.snappy) { noWait = false } }
-            if let typed, abs(typed - wheel) >= 30 { text = "" }
+            if let typed {
+                // The wheel showing what was typed (held to 1 minute…12 hours) isn't the person spinning it:
+                // a typed 18 h shows as 12 h on the wheel and must stay 18 h.
+                let shown = min(max(60, typed), Self.wheelMax)
+                guard abs(shown - wheel) >= 30 else { return }
+                text = ""   // they spun it after typing: the wheel wins
+            }
+            // Spinning the wheel picks a wait, so it isn't "Leave now" any more.
+            if noWait { withAnimation(Brand.snappy) { noWait = false } }
         }
     }
 

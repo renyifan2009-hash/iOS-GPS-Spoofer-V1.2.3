@@ -128,8 +128,14 @@ public struct NaturalDrive: Sendable {
     /// aims for nothing while moving, or the car would stop short of the stop it slows for.
     private func targetShare() -> Double {
         // On a road with a known limit, the cruise is a share of that limit; elsewhere of the chosen speed.
-        let road = limit(at: elapsed).map { $0 / route.speed } ?? 1
-        let cruise = min(topShare, self.cruise * road)
+        let here = limit(at: elapsed) ?? route.speed
+        let road = here / route.speed
+        var cruise = min(topShare, self.cruise * road)
+        // A lower limit coming up: ease off before it, the way a driver lifts off at the sign.
+        if let ahead = lowerLimitAhead(from: route.meters(at: elapsed), current: here) {
+            let slower = min(topShare, self.cruise * ahead.speed / route.speed)
+            cruise = slower + (cruise - slower) * min(1, max(0, ahead.meters / ahead.brakingMeters))
+        }
         let lookahead = driving ? max(40, route.speed * max(1, road) * 5) : 8
         guard let ahead = route.slowdownAhead(at: elapsed, within: lookahead) else { return cruise }
         let atCorner: Double
@@ -142,6 +148,20 @@ public struct NaturalDrive: Sendable {
         }
         let blend = min(1, max(0, ahead.meters / lookahead))
         return max(driving ? 0.1 : 0.3, min(cruise, atCorner + (cruise - atCorner) * blend))
+    }
+
+    /// The next stretch with a lower limit than `current` (m/s), if it starts within the distance a car
+    /// needs to slow to it gently (about 1.5 m/s², and at least 30 m).
+    private func lowerLimitAhead(from meters: Double, current: Double)
+        -> (meters: Double, speed: Double, brakingMeters: Double)? {
+        for zone in speedLimits where zone.start > meters {
+            let distance = zone.start - meters
+            if distance > 500 { return nil }   // sorted by start: nothing nearer after this
+            guard zone.speed < current else { continue }
+            let braking = max(30, (current * current - zone.speed * zone.speed) / (2 * 1.5))
+            return distance <= braking ? (distance, zone.speed, braking) : nil
+        }
+        return nil
     }
 
     /// Passing a corner between `from` and `to` on the timeline: sometimes it's a red light or a sign.

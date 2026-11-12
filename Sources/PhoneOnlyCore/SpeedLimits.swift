@@ -190,7 +190,7 @@ extension SpeedZone {
         var result = primary
         for zone in fallback where zone.end > zone.start {
             var pieces = [zone]
-            for covered in primary {
+            for covered in result {
                 pieces = pieces.flatMap { piece -> [SpeedZone] in
                     guard covered.end > piece.start, covered.start < piece.end else { return [piece] }
                     var left: [SpeedZone] = []

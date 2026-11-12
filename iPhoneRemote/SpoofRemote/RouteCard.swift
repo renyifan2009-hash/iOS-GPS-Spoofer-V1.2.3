@@ -225,6 +225,11 @@ struct RouteCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 58, alignment: .trailing)
             }
+            if followsLimitsHere && route.followSpeedLimits {
+                Text("Speed is for roads with no known limit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .font(.subheadline)
     }

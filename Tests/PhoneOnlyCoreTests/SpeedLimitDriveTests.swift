@@ -51,6 +51,35 @@ final class SpeedLimitDriveTests: XCTestCase {
         XCTAssertEqual(averages[1] / (55 * mph), 0.98, accuracy: 0.08, "the 55 mph road at about 55, well over the chosen 30")
     }
 
+    func testItEasesOffBeforeALowerLimitNotAfter() throws {
+        let route = try straight()
+        let mph = 0.44704
+        let zones = [SpeedZone(start: 0, end: 2_400, speed: 55 * mph), SpeedZone(start: 2_400, end: 4_000, speed: 25 * mph)]
+        var drive = NaturalDrive(route: route, driving: true, speedLimits: zones, seed: 5)
+        let averages = averageSpeed(&drive, in: [1_800...2_000, 2_380...2_400, 2_420...2_460])
+        XCTAssertGreaterThan(averages[0], 48 * mph, "cruising at the 55 limit")
+        XCTAssertLessThan(averages[1], 30 * mph, "already down near 25 at the sign")
+        XCTAssertLessThan(averages[2], 27 * mph, "and not still braking well past it")
+    }
+
+    func testTheWholeLookupStopsAtItsBudgetEvenIfAServerTrickles() async throws {
+        let route = try straight()
+        let loader = RoadSpeedLimits(userAgent: "AnyWhere-test", timeBudget: 1) { _ in
+            try await Task.sleep(for: .seconds(30))   // a server that never finishes answering
+            throw URLError(.timedOut)
+        }
+        let started = ContinuousClock.now
+        let zones = await loader.zones(along: route.passPath.map { GeoPoint($0.latitude, $0.longitude) })
+        XCTAssertTrue(zones.isEmpty)
+        XCTAssertLessThan(started.duration(to: .now), .seconds(6))
+    }
+
+    func testFallbackStretchesNeverOverlap() {
+        let merged = SpeedZone.merged(primary: [], fallback: [SpeedZone(start: 0, end: 300, speed: 10),
+                                                              SpeedZone(start: 200, end: 500, speed: 20)])
+        XCTAssertEqual(merged, [SpeedZone(start: 0, end: 300, speed: 10), SpeedZone(start: 300, end: 500, speed: 20)])
+    }
+
     func testWhereNoLimitIsKnownItUsesTheChosenSpeed() throws {
         let route = try straight()
         let zones = [SpeedZone(start: 0, end: 1_500, speed: 30)]   // a fast first stretch only

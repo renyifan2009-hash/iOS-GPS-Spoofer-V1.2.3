@@ -923,7 +923,7 @@ struct ContentView: View {
             return "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
         }
         return "This iPhone drives each road at about its speed limit (OpenStreetMap's), easing off for corners and "
-            + "stopping at some lights. Speed is for roads with no known limit."
+            + "stopping at some lights."
     }
 
     private func setPhone(_ place: Place) {

@@ -11,8 +11,9 @@ public enum OverpassQuery {
         URL(string: "https://overpass.private.coffee/api/interpreter")!,
     ]
 
-    /// How far from the route a road may be and still be the one it drives on, in metres.
-    public static let roadRadius = 6.0
+    /// How far from the route to ask for roads, in metres: as far as `SpeedLimits.zones` accepts one as
+    /// the road being driven (12 m; a divided road's carriageway can be that far from Apple Maps' line).
+    public static let roadRadius = 12.0
 
     /// Pieces of at most 15 km, simplified to 150 points or fewer; `padding` widens the search by how
     /// far the simplified line may stray.
@@ -81,6 +82,21 @@ public struct RoadSpeedLimits: Sendable {
     /// The limits along `points`, as stretches by distance from the first point (metres). Empty when
     /// nothing could be loaded: no network, or no roads for cars under the route.
     public func zones(along points: [GeoPoint]) async -> [SpeedZone] {
+        let budget = timeBudget
+        return await withTaskGroup(of: [SpeedZone]?.self) { group in
+            group.addTask { await self.load(points) }
+            // A request's own timeout only counts silence; a slow trickle could run past the budget.
+            group.addTask {
+                try? await Task.sleep(for: .seconds(max(1, budget) + 2))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first ?? []
+        }
+    }
+
+    private func load(_ points: [GeoPoint]) async -> [SpeedZone] {
         let path = RoutePath(points)
         guard path.length > 0 else { return [] }
         let deadline = ContinuousClock.now.advanced(by: .seconds(max(1, timeBudget)))
