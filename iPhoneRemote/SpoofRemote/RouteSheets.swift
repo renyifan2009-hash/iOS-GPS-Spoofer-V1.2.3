@@ -55,7 +55,8 @@ struct RouteStopsSheet: View {
             WaitEditorSheet(title: index == 0 ? "Leave after" : "Stop \(index + 1)",
                             prompt: index == 0 ? "How long to wait at the start before leaving."
                                                : "How long to stop here before carrying on.",
-                            initial: stop.wait, zeroLabel: index == 0 ? "Leave now" : "No wait") { seconds in
+                            initial: stop.wait, zeroLabel: index == 0 ? "Leave now" : "No wait",
+                            showsLeaveTime: index == 0) { seconds in
                 withAnimation(Brand.snappy) { route.setWait(seconds, for: stop.id) }
             }
         }
@@ -130,6 +131,8 @@ struct RouteHistorySheet: View {
     @State private var tab: Tab = .saved
     @State private var renaming: SavedRoute?
     @State private var renameText = ""
+    /// Redraws this view when Settings switches miles and kilometres.
+    @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
 
     private var routes: [SavedRoute] { tab == .saved ? library.saved : library.recents }
 

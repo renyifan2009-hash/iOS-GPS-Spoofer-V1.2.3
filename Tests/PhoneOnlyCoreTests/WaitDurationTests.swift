@@ -195,6 +195,28 @@ final class SpeedUnitsTests: XCTestCase {
         XCTAssertTrue(SpeedUnits(region: .uk).imperial)       // UK road speeds are in mph
         XCTAssertFalse(SpeedUnits(region: .metric).imperial)
     }
+
+    func testAPickedUnitBeatsTheRegion() {
+        XCTAssertFalse(SpeedUnits.resolve(.automatic, region: .metric).imperial)   // a metric phone: km unless picked
+        XCTAssertTrue(SpeedUnits.resolve(.automatic, region: .us).imperial)
+        XCTAssertTrue(SpeedUnits.resolve(.miles, region: .metric).imperial)
+        XCTAssertFalse(SpeedUnits.resolve(.kilometers, region: .us).imperial)
+        XCTAssertEqual(UnitsChoice(rawValue: "miles"), .miles)                     // what @AppStorage saves
+    }
+
+    func testDistanceTextFollowsTheUnitNotTheRegion() {
+        let us = Locale(identifier: "en_US"), germany = Locale(identifier: "de_DE")
+        func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{00A0}", with: " ") }
+        XCTAssertEqual(plain(mph.distanceText(meters: 3_057.7, locale: us)), "1.9 mi")
+        XCTAssertEqual(plain(mph.distanceText(meters: 482.8, locale: us)), "0.3 mi")
+        XCTAssertEqual(plain(mph.distanceText(meters: 152.4, locale: us)), "500 ft")
+        XCTAssertEqual(plain(mph.distanceText(meters: 19_312, locale: us)), "12 mi")
+        XCTAssertEqual(plain(kmh.distanceText(meters: 850, locale: us)), "850 m")
+        XCTAssertEqual(plain(kmh.distanceText(meters: 1_900, locale: us)), "1.9 km")
+        XCTAssertEqual(plain(kmh.distanceText(meters: 12_400, locale: us)), "12 km")
+        XCTAssertEqual(plain(mph.distanceText(meters: 3_057.7, locale: germany)), "1,9 mi")   // miles on a German phone
+        XCTAssertEqual(plain(mph.distanceText(meters: .nan, locale: us)), "0 ft")
+    }
 }
 
 final class RouteWaitTextTests: XCTestCase {

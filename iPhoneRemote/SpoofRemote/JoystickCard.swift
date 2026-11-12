@@ -178,6 +178,8 @@ struct JoystickCardView: View {
     var hasPlace: Bool
 
     @Environment(\.scenePhase) private var scenePhase
+    /// Redraws this view when Settings switches miles and kilometres.
+    @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
 
     private var status: RemoteStatus? { connection.status }
     private var held: Bool { connection.isSpoofing }

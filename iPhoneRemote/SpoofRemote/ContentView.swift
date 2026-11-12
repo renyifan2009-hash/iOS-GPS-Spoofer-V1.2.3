@@ -34,6 +34,10 @@ struct ContentView: View {
     @State private var showPhoneSetup = false
     @State private var showSettings = false
     @State private var showPaywall = false
+    #if DEBUG
+    /// `-SpoofRemoteShow autoStop`: the Stop After sheet, for screenshots.
+    @State private var showAutoStopDemo = false
+    #endif
     /// A pairing file that came in an `anywhere://pairingfile` link, waiting for the person to say yes.
     /// Any page or app can open such a link, so it never replaces the working file on its own.
     @State private var offeredPairing: Data?
@@ -84,6 +88,9 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        #if DEBUG
+        .sheet(isPresented: $showAutoStopDemo) { AutoStopSheet(connection: connection) }
+        #endif
         .sheet(isPresented: $showPaywall) {
             PaywallView()
         }
@@ -184,6 +191,8 @@ struct ContentView: View {
                 showSettings = true
             case "paywall":
                 showPaywall = true
+            case "autoStop":
+                showAutoStopDemo = true
             case "applePark":
                 // Just the map, at Apple Park with a pin (for screenshots): nothing is started.
                 let place = Place(name: "Apple Park", subtitle: "Cupertino, CA", latitude: 37.3349, longitude: -122.0090)
