@@ -102,15 +102,26 @@ public enum ReleaseInstall {
         let fm = FileManager.default
         let mount = fm.temporaryDirectory.appendingPathComponent("anywhere-mount-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
-        let attach = try ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/hdiutil"),
-                                           arguments: ["attach", dmg.path, "-nobrowse", "-readonly", "-noverify",
-                                                       "-mountpoint", mount.path, "-quiet"], timeout: 120)
+        // Opening a disk image now and then fails for a moment ("resource busy"), and a failed try can leave it
+        // half open. Close whatever is left and try again a few times before giving up.
+        var attach = try ProcessRunner.run(hdiutil, arguments: attachArguments(dmg, at: mount), timeout: 120)
+        for wait in [1.0, 2, 4] where attach.status != 0 {
+            detachAll(of: dmg)
+            Thread.sleep(forTimeInterval: wait)
+            attach = try ProcessRunner.run(hdiutil, arguments: attachArguments(dmg, at: mount), timeout: 120)
+        }
         guard attach.status == 0 else {
+            detachAll(of: dmg)
             try? fm.removeItem(at: mount)
             throw Problem.couldNotMount(attach.errorSummary.isEmpty ? "status \(attach.status)" : attach.errorSummary)
         }
         func detach() {
-            _ = try? ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/hdiutil"), arguments: ["detach", mount.path, "-force", "-quiet"], timeout: 60)
+            for wait in [0.0, 1, 2] {
+                if wait > 0 { Thread.sleep(forTimeInterval: wait) }
+                let result = try? ProcessRunner.run(hdiutil, arguments: ["detach", mount.path, "-force", "-quiet"], timeout: 60)
+                if result?.status == 0 { break }
+            }
+            detachAll(of: dmg)   // anything still open from this image
             try? fm.removeItem(at: mount)
         }
 
@@ -143,6 +154,35 @@ public enum ReleaseInstall {
     }
 
     /// Runs the app's launch self-test (see SelfTest in the app). Exit 0 and `SELF-TEST-OK` mean it started.
+    private static let hdiutil = URL(fileURLWithPath: "/usr/bin/hdiutil")
+
+    private static func attachArguments(_ dmg: URL, at mount: URL) -> [String] {
+        ["attach", dmg.path, "-nobrowse", "-readonly", "-noverify", "-mountpoint", mount.path, "-quiet"]
+    }
+
+    /// Closes every device still open from `dmg` (`hdiutil info` lists them by image path).
+    static func detachAll(of dmg: URL) {
+        for device in attachedDevices(of: dmg) {
+            _ = try? ProcessRunner.run(hdiutil, arguments: ["detach", device, "-force", "-quiet"], timeout: 60)
+        }
+    }
+
+    /// The whole-disk devices (`/dev/diskN`) open from `dmg`, from `hdiutil info -plist`.
+    static func attachedDevices(of dmg: URL) -> [String] {
+        guard let info = try? ProcessRunner.run(hdiutil, arguments: ["info", "-plist"], timeout: 30), info.status == 0,
+              let plist = try? PropertyListSerialization.propertyList(from: Data(info.stdout.utf8), format: nil)
+                as? [String: Any],
+              let images = plist["images"] as? [[String: Any]] else { return [] }
+        let wanted = dmg.resolvingSymlinksInPath().path
+        return images.compactMap { image -> String? in
+            guard let path = image["image-path"] as? String,
+                  URL(fileURLWithPath: path).resolvingSymlinksInPath().path == wanted,
+                  let entities = image["system-entities"] as? [[String: Any]] else { return nil }
+            // The shortest dev-entry is the whole disk; detaching it closes its volumes too.
+            return entities.compactMap { $0["dev-entry"] as? String }.min { $0.count < $1.count }
+        }
+    }
+
     public static func runSelfTest(of app: URL, appName: String = "AnyWhere") throws {
         let executable = app.appendingPathComponent("Contents/MacOS/\(appName)")
         var environment = ProcessInfo.processInfo.environment
