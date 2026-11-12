@@ -47,14 +47,14 @@ extension AppModel {
     /// A route runs on the trip engine when "Drive like a real person" is on, or when one of its stops has a
     /// wait (only the trip engine stops and waits). With the setting off it keeps to the plain speed:
     /// no lights, signs, turns, limits or breaks, just the waits you set.
-    var usesTripEngine: Bool { prefs.realisticTrips || waypoints.contains { $0.wait > 0 } }
+    var usesTripEngine: Bool { realisticTrips || waypoints.contains { $0.wait > 0 } }
 
     func tripSettings(paceFactor: Double = 1) -> TripSettings {
         let top = max(0.1, effectiveRouteSpeed)
         // The iPhone asked for each road at its limit: a car, however slow the speed for unknown roads.
         let atLimits = followsRemoteLimits
         let profile = atLimits ? .drive : MotionProfile.forSpeed(top)
-        guard prefs.realisticTrips else {
+        guard realisticTrips else {
             return TripSettings(topSpeed: top, profile: profile, trafficLights: false, stopSigns: false,
                                 slowForTurns: false, speedLimits: false, breaks: false,
                                 speedVariation: prefs.speedVariation, paceFactor: paceFactor)
@@ -154,7 +154,7 @@ extension AppModel {
         // Speed bumps alone are worth a lookup too, but only for driving.
         let wanted = prefs.tripTrafficLights || prefs.tripStopSigns || prefs.tripSpeedLimits
             || (prefs.tripSlowForTurns && travelMode == .driving) || followsRemoteLimits
-        guard prefs.realisticTrips, wanted, waypoints.count >= 2, routeGeometry.count >= 2 else {
+        guard realisticTrips, wanted, waypoints.count >= 2, routeGeometry.count >= 2 else {
             roadDataTask?.cancel()
             roadDataState = .off
             return
@@ -269,7 +269,7 @@ extension AppModel {
 
     /// The lights and signs to show along the route.
     var roadMarkers: [RoadMarker] {
-        guard prefs.realisticTrips, mode == .route || activity == .routing, roadDataReady else { return [] }
+        guard realisticTrips, mode == .route || activity == .routing, roadDataReady else { return [] }
         var seen = Set<GeoPoint>()
         let wayBack = loopMode == .pingPong
         return roadFeatures.features.compactMap { feature in

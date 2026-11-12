@@ -571,7 +571,7 @@ struct ContentView: View {
                     .contentTransition(.opacity)
             }
             .prominentButton()
-            .disabled(!route.canDrive || connection.isWorking || !connection.isOnline)
+            .disabled(!route.canDrive || connection.isWorking || connection.findingRoads || !connection.isOnline)
         }
     }
 

@@ -255,7 +255,8 @@ asking Apple Maps again (and asks for a `null` leg itself), and `iosgpsspoof
 serve`, which has no Apple Maps, drives them as sent (a `null` leg is straight).
 Legs that don't fit the stops (a wrong count, an end more than 150 m from its
 stop, more than 60,000 points in all) are ignored, never an error. Because of
-them `/route` takes bodies up to 4 MB; every other call stays at 64 KB, and an
+them `/route` takes bodies up to 4 MB from a paired iPhone (a body over 64 KB
+with no valid token is a 413); every other call stays at 64 KB, and an
 older Mac turns a body over 64 KB away, so the iPhone sends legs only to a Mac
 that reports `apiVersion` 3 or later.
 
@@ -266,8 +267,9 @@ its public servers are busy (they answer 502 when full), each leg's
 `expectedSeconds` from Apple Maps stands in, the same as on the iPhone on its
 own. Without it, `speed` stays the top speed and limits only slow the route,
 as before. The iPhone shows **Drive at the speed limit** for a Mac only once
-it reports protocol 3. The Mac app applies it only while its own
-**Drive like a real person** is on. A bad
+it reports protocol 3. For a route the iPhone sent, the Mac app follows the
+iPhone's **Drive like a real person** (`realistic`) rather than its own, for as
+long as the window still has that route. A bad
 route (fewer than two points, a point off the planet, a negative wait or one
 longer than a day) is a 400. A Mac from before routes existed answers 501, and the iPhone app says to
 update the Mac app. Errors are a non-2xx status with `{"error": "message"}`: 400 bad

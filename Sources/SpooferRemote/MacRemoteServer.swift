@@ -150,7 +150,9 @@ public final class MacRemoteServer: @unchecked Sendable {
             connection.cancel()
             return
         }
-        let client = HTTPConnection(connection: connection, queue: queue) { [weak self] request in
+        let pairing = self.pairing
+        let paired: @Sendable (String?) -> Bool = { token in token.map { pairing.authorize(token: $0) != nil } ?? false }
+        let client = HTTPConnection(connection: connection, queue: queue, paired: paired) { [weak self] request in
             guard let self else { return .json(status: 503, APIError("The server is shutting down.")) }
             return await self.handle(request)
         }
@@ -335,12 +337,15 @@ struct HTTPRequest: Sendable, Equatable {
     static let maxHeaderBytes = 16 * 1024
     static let maxBodyBytes = 64 * 1024
 
-    /// A route can carry its roads, so it may be bigger than any other call.
-    static func maxBodyBytes(for path: String) -> Int {
-        path == RemoteAPI.Path.route ? RemoteAPI.maxRouteBodyBytes : maxBodyBytes
+    /// A route can carry its roads, so it may be bigger than any other call: for a paired iPhone only, so a
+    /// stranger on the network can't make the Mac hold megabytes for it.
+    static func maxBodyBytes(for path: String, paired: Bool) -> Int {
+        path == RemoteAPI.Path.route && paired ? RemoteAPI.maxRouteBodyBytes : maxBodyBytes
     }
 
-    var bearerToken: String? {
+    var bearerToken: String? { Self.bearerToken(in: headers) }
+
+    static func bearerToken(in headers: [String: String]) -> String? {
         guard let value = headers["authorization"] else { return nil }
         let parts = value.split(separator: " ", maxSplits: 1)
         guard parts.count == 2, parts[0].lowercased() == "bearer" else { return nil }
@@ -348,7 +353,8 @@ struct HTTPRequest: Sendable, Equatable {
         return token.isEmpty ? nil : token
     }
 
-    static func parse(_ data: Data) -> ParseResult {
+    /// `paired` says whether a bearer token belongs to a paired iPhone (asked only for a big route).
+    static func parse(_ data: Data, paired: (String?) -> Bool = { _ in true }) -> ParseResult {
         guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else {
             return data.count > maxHeaderBytes ? .invalid(status: 431, message: "Headers too large.") : .incomplete
         }
@@ -377,7 +383,7 @@ struct HTTPRequest: Sendable, Equatable {
         let target = String(requestLine[1])
         let path = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
             .first.map(String.init) ?? target
-        guard length <= maxBodyBytes(for: path) else {
+        guard length <= maxBodyBytes || length <= maxBodyBytes(for: path, paired: paired(Self.bearerToken(in: headers))) else {
             return .invalid(status: 413, message: "Request too large.")
         }
         let bodyStart = headerEnd.upperBound
@@ -435,6 +441,7 @@ final class HTTPConnection: @unchecked Sendable {
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let handler: @Sendable (HTTPRequest) async -> HTTPResponse
+    private let paired: @Sendable (String?) -> Bool
     private var buffer = Data()
     private var responded = false
     private var closed = false
@@ -443,10 +450,11 @@ final class HTTPConnection: @unchecked Sendable {
     /// a first start lists devices (which can take a while) before answering.
     static let timeout: TimeInterval = 45
 
-    init(connection: NWConnection, queue: DispatchQueue,
+    init(connection: NWConnection, queue: DispatchQueue, paired: @escaping @Sendable (String?) -> Bool = { _ in false },
          handler: @escaping @Sendable (HTTPRequest) async -> HTTPResponse) {
         self.connection = connection
         self.queue = queue
+        self.paired = paired
         self.handler = handler
     }
 
@@ -472,7 +480,7 @@ final class HTTPConnection: @unchecked Sendable {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
             guard let self, !self.closed, !self.responded else { return }
             if let data { self.buffer.append(data) }
-            switch HTTPRequest.parse(self.buffer) {
+            switch HTTPRequest.parse(self.buffer, paired: self.paired) {
             case .complete(let request):
                 self.respond(to: request)
             case .invalid(let status, let message):

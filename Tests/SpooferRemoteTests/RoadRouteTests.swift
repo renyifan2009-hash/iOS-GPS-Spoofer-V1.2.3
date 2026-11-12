@@ -88,6 +88,14 @@ final class RoadRouteTests: XCTestCase {
         XCTAssertEqual(roads.legZones[0].speed, 820 / 60 * 1.15, accuracy: 0.01)
     }
 
+    /// A request that isn't a route has no roads either (and never trips over its missing stop).
+    func testAnInvalidRouteHasNoRoads() {
+        let nowhere = RouteRequest.Waypoint(latitude: .nan, longitude: 0)
+        let request = RouteRequest(waypoints: [a, nowhere, c], followRoads: true, legs: [nil, nil])
+        XCTAssertNil(RoadRoute(request: request))
+        XCTAssertThrowsError(try RouteRunner.build(from: request))
+    }
+
     /// A leg for somewhere else is not driven.
     func testLegsThatDontMeetTheStopsAreIgnored() {
         let elsewhere = RoadLeg(points: [(40.0, -74.0), (40.01, -74.0)])
@@ -170,19 +178,26 @@ final class RoadRouteTests: XCTestCase {
 
     // MARK: Server
 
-    /// A route with its roads may be bigger than other calls, which stay small.
-    func testOnlyARouteMayCarryABigBody() {
-        func head(_ path: String, _ length: Int) -> String {
-            "POST \(path) HTTP/1.1\r\nContent-Length: \(length)\r\n\r\n"
+    /// A route with its roads may be bigger than other calls, which stay small, and only from a paired iPhone.
+    func testOnlyAPairedRouteMayCarryABigBody() {
+        func head(_ path: String, _ length: Int, token: String = "good") -> String {
+            "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(token)\r\nContent-Length: \(length)\r\n\r\n"
         }
+        let paired: (String?) -> Bool = { $0 == "good" }
         let body = String(repeating: "x", count: 300_000)
-        guard case .complete(let request) = HTTPRequest.parse(Data((head("/route", body.count) + body).utf8)) else {
-            return XCTFail("a 300 KB route should be read")
+        guard case .complete(let request) = HTTPRequest.parse(Data((head("/route", body.count) + body).utf8),
+                                                              paired: paired) else {
+            return XCTFail("a 300 KB route from a paired iPhone should be read")
         }
         XCTAssertEqual(request.body.count, 300_000)
-        XCTAssertEqual(HTTPRequest.parse(Data(head("/location", 300_000).utf8)),
-                       .invalid(status: 413, message: "Request too large."))
-        XCTAssertEqual(HTTPRequest.parse(Data(head("/route", RemoteAPI.maxRouteBodyBytes + 1).utf8)),
-                       .invalid(status: 413, message: "Request too large."))
+        let tooLarge = HTTPRequest.ParseResult.invalid(status: 413, message: "Request too large.")
+        XCTAssertEqual(HTTPRequest.parse(Data(head("/route", 300_000, token: "stranger").utf8), paired: paired), tooLarge,
+                       "a stranger can't make the Mac hold a big body")
+        XCTAssertEqual(HTTPRequest.parse(Data(head("/location", 300_000).utf8), paired: paired), tooLarge)
+        XCTAssertEqual(HTTPRequest.parse(Data(head("/route", RemoteAPI.maxRouteBodyBytes + 1).utf8), paired: paired),
+                       tooLarge)
+        // A small route needs no pairing check here (the server still answers 401 to a stranger).
+        XCTAssertNotEqual(HTTPRequest.parse(Data(head("/route", 2, token: "stranger").utf8 + Data("{}".utf8)),
+                                            paired: paired), tooLarge)
     }
 }

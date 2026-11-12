@@ -259,7 +259,9 @@ public enum RouteSimplifier {
     /// left with fewer than two real places becomes nil.
     public static func simplify(legs: [[GeoPoint]?], maxPoints: Int) -> [[GeoPoint]?] {
         func thinned(_ tolerance: Double) -> [[GeoPoint]?] {
-            legs.map { leg in leg.flatMap { simplify($0, tolerance: tolerance) }.flatMap { $0.count >= 2 ? $0 : nil } }
+            legs.map { leg in
+                leg.map { simplify($0.filter(\.isValid), tolerance: tolerance) }.flatMap { $0.count >= 2 ? $0 : nil }
+            }
         }
         func total(_ legs: [[GeoPoint]?]) -> Int { legs.reduce(0) { $0 + ($1?.count ?? 0) } }
         var tolerance = 1.0

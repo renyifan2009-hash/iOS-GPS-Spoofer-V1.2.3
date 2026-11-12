@@ -22,7 +22,7 @@ public struct RoadRoute: Sendable, Equatable {
 
     /// nil when the request has no legs, or they don't fit its stops.
     public init?(request: RouteRequest) {
-        guard let legs = request.usableLegs else { return nil }
+        guard request.isValid, let legs = request.usableLegs else { return nil }
         let stops = request.waypoints.map { GeoPoint($0.latitude, $0.longitude) }
         var ends = stops
         if legs.count == stops.count { ends.append(stops[0]) }   // a loop's way back

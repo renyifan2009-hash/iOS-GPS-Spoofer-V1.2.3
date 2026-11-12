@@ -26,6 +26,8 @@ extension AppModel {
         waypoints = request.waypoints.map {
             Waypoint(point: GeoPoint($0.latitude, $0.longitude), wait: WaitDuration.clamp($0.wait ?? 0))
         }
+        // The same stops as the route before don't ask for roads again by themselves: these may be new ones.
+        if remoteRoadPlan?.hasRoads == true { routeInputsChanged() }
         appendLog("iPhone Remote: a \(request.waypoints.count)-point route\(request.name.map { " “\($0)”" } ?? "").", level: .info)
         remoteRouteTask = Task { [weak self] in
             // Road legs come from Apple Maps a moment after the stops are set.
@@ -57,14 +59,21 @@ extension AppModel {
                 })
             }
         }
-        return RemoteRoadPlan(stops: stops, followLimits: RouteRunner.followsLimits(request), legCruise: cruise)
+        return RemoteRoadPlan(stops: stops, followRoads: request.followRoads,
+                              travelMode: TravelMode(rawValue: request.travelMode) ?? .walking,
+                              realistic: request.realistic, followLimits: RouteRunner.followsLimits(request),
+                              hasRoads: RoadRoute(request: request) != nil, legCruise: cruise)
     }
 
-    /// The iPhone's plan, while the window still has the stops it sent.
+    /// The iPhone's plan, while the window still has the route it sent (its stops, roads and travel).
     var activeRemoteRoadPlan: RemoteRoadPlan? {
-        guard let plan = remoteRoadPlan, plan.stops == waypoints.map(\.point) else { return nil }
+        guard let plan = remoteRoadPlan, plan.stops == waypoints.map(\.point), plan.followRoads == followRoads,
+              plan.travelMode == travelMode else { return nil }
         return plan
     }
+
+    /// "Drive like a real person": as the iPhone asked for the route it sent, otherwise the Mac's own setting.
+    var realisticTrips: Bool { activeRemoteRoadPlan?.realistic ?? prefs.realisticTrips }
 
     /// Drive each road at about its limit, as the iPhone asked.
     var followsRemoteLimits: Bool { activeRemoteRoadPlan?.followLimits == true && travelMode == .driving }
@@ -101,10 +110,16 @@ extension AppModel {
 
 /// How the iPhone wants the route it sent driven.
 struct RemoteRoadPlan: Equatable {
-    /// The route's stops, to tell whether the window still has it.
+    /// The route's stops, roads and travel, to tell whether the window still has it.
     var stops: [GeoPoint]
+    var followRoads: Bool
+    var travelMode: TravelMode
+    /// "Drive like a real person" on the iPhone.
+    var realistic: Bool
     /// Each road at about its limit, the speed only where none is known.
     var followLimits: Bool
+    /// The iPhone sent roads for it (put into the directions cache).
+    var hasRoads: Bool
     /// Apple Maps' typical speed for each leg (the way back last, for a loop), m/s; nil where it had none.
     var legCruise: [Double?]
 }

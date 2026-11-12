@@ -31,5 +31,7 @@ final class RoadLegZoneTests: XCTestCase {
         let close = RouteSimplifier.simplify(legs: [[GeoPoint(37, -122), GeoPoint(37.001, -122), GeoPoint(37.001, -121.999)]],
                                              maxPoints: 1000)
         XCTAssertEqual(close[0]?.count, 3, "a real corner is kept")
+        // A short leg with a point that isn't a place is no leg at all, rather than one the Mac would refuse.
+        XCTAssertNil(RouteSimplifier.simplify(legs: [[GeoPoint(37, -122), GeoPoint(.nan, 0)]], maxPoints: 10)[0])
     }
 }

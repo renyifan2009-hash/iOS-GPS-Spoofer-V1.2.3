@@ -53,6 +53,8 @@ enum MacRouteLegs {
     static let shortLeg = 25.0
     /// All legs together, at most: a few hundred kilometres of road, well inside what the Mac accepts.
     static let maxPoints = 30_000
+    /// Seconds to spend asking for legs in all; any left go without, and the Mac finds them itself.
+    static let timeBudget = 20.0
 
     /// The stops each leg joins, in order: the route's own, and back to the first for a loop that doesn't
     /// end there (the same rule as `RouteRequest.usableLegs`).

@@ -65,7 +65,8 @@ final class DirectionsService {
                 switch await Self.fetchLeg(from: a, to: b, mode: mode, retries: failure?.isTemporary == true ? 0 : 2) {
                 case .success(let fetched):
                     leg = fetched
-                    cache[key] = fetched
+                    // A leg primed meanwhile (the iPhone's, for a route it sent) is the one to keep.
+                    if cache[key] == nil { cache[key] = fetched }
                     if cache.count > 500 { cache.removeAll() }
                 case .failure(let reason):
                     leg = [a, b]

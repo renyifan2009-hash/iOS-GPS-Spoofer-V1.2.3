@@ -61,6 +61,8 @@ final class ConnectionManager {
     private(set) var isWorking = false
     /// Asking Apple Maps for a route's roads before sending it to the Mac.
     private(set) var findingRoads = false
+    /// Counts road lookups, so a Stop meanwhile can call the one in progress off.
+    @ObservationIgnored private var lookups = 0
     var lastError: String?
     /// iOS is not letting this app look for Macs: the person said no to Local
     /// Network, or never answered. Nothing else tells them, because the
@@ -414,7 +416,9 @@ final class ConnectionManager {
 
     @discardableResult
     func stop() async -> Bool {
-        await command(RemoteAPI.Path.stop, nil)
+        lookups += 1   // a route still finding its roads isn't sent
+        findingRoads = false
+        return await command(RemoteAPI.Path.stop, nil)
     }
 
     /// The Mac speaks protocol version 3 or later: it takes a route's roads (`RouteRequest.legs`) and can
@@ -424,14 +428,19 @@ final class ConnectionManager {
     @discardableResult
     func driveRoute(_ request: RouteRequest) async -> Bool {
         var request = request
-        if request.followRoads, request.legs == nil, takesRoads {
+        if !takesRoads {
+            request.legs = nil   // an older Mac turns a body that big away
+        } else if request.followRoads, request.legs == nil {
             // The roads this iPhone's Apple Maps finds go with the route, so the Mac drives them (and looks up
-            // their limits) without finding its own; it finds any leg left out itself.
-            isWorking = true
+            // their limits) without finding its own; it finds any leg left out itself. Stop stays usable
+            // meanwhile, and calls the route off.
+            lookups += 1
+            let lookup = lookups
             findingRoads = true
-            request.legs = await roadLegs(for: request)
+            let legs = await roadLegs(for: request)
+            guard lookup == lookups else { return false }
             findingRoads = false
-            isWorking = false
+            request.legs = legs
         }
         let body: Data?
         do {
@@ -444,15 +453,17 @@ final class ConnectionManager {
     }
 
     /// Apple Maps' roads between the stops. A leg it can't find (no road, offline, too many requests) is left
-    /// nil; after two misses the rest aren't asked for, so a phone with no signal doesn't wait on each one.
+    /// nil; after two misses, or `MacRouteLegs.timeBudget` seconds, the rest aren't asked for, so a phone
+    /// with a poor signal doesn't keep the route waiting.
     private func roadLegs(for request: RouteRequest) async -> [RoadLeg?]? {
         let stops = MacRouteLegs.stops(of: request)
         let driving = request.travelMode == "driving"
+        let deadline = ContinuousClock.now.advanced(by: .seconds(MacRouteLegs.timeBudget))
         var legs: [AppleMapsLeg?] = []
         var misses = 0
         for (a, b) in zip(stops, stops.dropFirst()) {
             guard !Task.isCancelled else { return nil }
-            guard misses < 2, StandaloneRoute.distance(a, b) >= MacRouteLegs.shortLeg else {
+            guard misses < 2, ContinuousClock.now < deadline, StandaloneRoute.distance(a, b) >= MacRouteLegs.shortLeg else {
                 legs.append(nil)
                 continue
             }
