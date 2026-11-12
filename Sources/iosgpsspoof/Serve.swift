@@ -85,7 +85,9 @@ struct Serve: ParsableCommand {
         let pairing = PairingManager()
         let controller = SessionRemoteController(pmd: pmd, options: .init(
             udid: common.udid, connection: common.connection, transport: common.transport,
-            engine: engineKind, serverName: serverName))
+            engine: engineKind, serverName: serverName,
+            // Routes on roads look up their lights, signs and speed limits on OpenStreetMap.
+            roadData: SessionRemoteController.Options.defaultRoadData))
         let verbose = self.verbose
         controller.onLog = { level, line in
             guard verbose || level != .debug else { return }

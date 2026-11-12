@@ -13,7 +13,7 @@ import Foundation
 ///     GET  /status     → RemoteStatus
 ///     POST /location   LocationRequest → RemoteStatus     (moves now if spoofing)
 ///     POST /start      LocationRequest? → RemoteStatus    (body optional)
-///     POST /route      RouteRequest → RemoteStatus        (drives a route)
+///     POST /route      RouteRequest → RemoteStatus        (drives a route, optionally on the roads sent)
 ///     POST /joystick   JoystickRequest → RemoteStatus     (steer: a heading and a speed)
 ///     POST /pause      PauseRequest → RemoteStatus        (pause or resume a route)
 ///     POST /autostop   AutoStopRequest → RemoteStatus     (stop by itself after N minutes)
@@ -23,7 +23,9 @@ import Foundation
 /// Errors come back as a non-2xx status with an `APIError` body.
 public enum RemoteAPI {
     /// 2: a wait on a route's first stop holds the start before leaving, and `/status` can carry `routeWait`.
-    public static let version = 2
+    /// 3: a route can carry its roads (`RouteRequest.legs`, so `/route` takes bodies up to
+    /// `maxRouteBodyBytes`) and ask to drive at each road's speed limit (`followSpeedLimits`).
+    public static let version = 3
     /// Bonjour service type the Mac advertises and the iPhone browses for.
     public static let serviceType = "_iosgpsspoof._tcp"
     public static let defaultPort: UInt16 = 47_653
@@ -162,13 +164,23 @@ public struct RouteRequest: Codable, Sendable, Equatable {
     public var timeOfDayTraffic: Bool
     /// Shown back in `RemoteStatus.placeName` and on the Mac.
     public var name: String?
+    /// The roads between the stops, as the iPhone's Apple Maps found them: `legs[i]` runs from waypoint
+    /// `i` to `i + 1`, and for a loop whose last stop isn't its first, one more runs from the last stop
+    /// back to the first. A nil leg is a straight line (Apple Maps had no road there). nil: the Mac finds
+    /// the roads itself, or drives straight lines. Sent to Macs on version 3 or later only: an older one
+    /// turns a body this big away.
+    public var legs: [RoadLeg?]?
+    /// With `realistic` and driving on roads: drive each road at about its speed limit, and `speed` only
+    /// where no limit is known. nil or false: `speed` is the top speed, and limits only slow the route.
+    public var followSpeedLimits: Bool?
 
     public static let travelModes = ["walking", "driving"]
     public static let loopModes = ["once", "loop", "pingPong"]
 
     public init(waypoints: [Waypoint], followRoads: Bool = false, travelMode: String = "walking",
                 loopMode: String = "once", speed: Double = 1.4, realistic: Bool = true,
-                timeOfDayTraffic: Bool = false, name: String? = nil) {
+                timeOfDayTraffic: Bool = false, name: String? = nil, legs: [RoadLeg?]? = nil,
+                followSpeedLimits: Bool? = nil) {
         self.waypoints = waypoints
         self.followRoads = followRoads
         self.travelMode = travelMode
@@ -177,6 +189,8 @@ public struct RouteRequest: Codable, Sendable, Equatable {
         self.realistic = realistic
         self.timeOfDayTraffic = timeOfDayTraffic
         self.name = name
+        self.legs = legs
+        self.followSpeedLimits = followSpeedLimits
     }
 
     public var isValid: Bool {
@@ -187,7 +201,8 @@ public struct RouteRequest: Codable, Sendable, Equatable {
 
     // Lenient decoding so a newer or older iPhone build still loads.
     enum CodingKeys: String, CodingKey {
-        case waypoints, followRoads, travelMode, loopMode, speed, realistic, timeOfDayTraffic, name
+        case waypoints, followRoads, travelMode, loopMode, speed, realistic, timeOfDayTraffic, name, legs,
+             followSpeedLimits
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,6 +215,67 @@ public struct RouteRequest: Codable, Sendable, Equatable {
         realistic = (try? c.decode(Bool.self, forKey: .realistic)) ?? true
         timeOfDayTraffic = (try? c.decode(Bool.self, forKey: .timeOfDayTraffic)) ?? false
         name = try? c.decodeIfPresent(String.self, forKey: .name)
+        // Roads that can't be read are left out (the Mac finds its own, or drives straight), not an error.
+        legs = try? c.decodeIfPresent([RoadLeg?].self, forKey: .legs)
+        followSpeedLimits = try? c.decodeIfPresent(Bool.self, forKey: .followSpeedLimits)
+    }
+
+    /// The road legs, if they fit this route: one per pair of stops (plus the way back for a loop that
+    /// doesn't end where it starts), each with readable points. nil otherwise.
+    public var usableLegs: [RoadLeg?]? {
+        guard let legs, waypoints.count >= 2 else { return nil }
+        let first = waypoints[0], last = waypoints[waypoints.count - 1]
+        let closes = loopMode == "loop" && (first.latitude != last.latitude || first.longitude != last.longitude)
+        let expected = waypoints.count - 1 + (closes ? 1 : 0)
+        // A loop that ends at its start needs no way back, but one sent anyway does no harm.
+        guard legs.count == expected || (loopMode == "loop" && legs.count == waypoints.count) else { return nil }
+        let points = legs.reduce(0) { $0 + ($1?.pointCount ?? 0) }
+        guard points <= RemoteAPI.maxRoadPoints, legs.allSatisfy({ $0?.isValid ?? true }) else { return nil }
+        return legs
+    }
+}
+
+/// One stretch of road between two stops of a route.
+public struct RoadLeg: Codable, Sendable, Equatable {
+    /// latitude, longitude, latitude, longitude… in degrees: the road from one stop to the next, starting at
+    /// the stop it leaves and ending at the one it reaches.
+    public var coordinates: [Double]
+    /// Apple Maps' length for it, metres.
+    public var meters: Double?
+    /// How long Apple Maps expects it to take, seconds: where no speed limit is known, the Mac drives it at
+    /// about the speed that makes (`SpeedZone.cruise`).
+    public var expectedSeconds: Double?
+
+    public init(coordinates: [Double], meters: Double? = nil, expectedSeconds: Double? = nil) {
+        self.coordinates = coordinates
+        self.meters = meters
+        self.expectedSeconds = expectedSeconds
+    }
+
+    /// From (latitude, longitude) points, each kept to six decimals (about 10 cm), which is plenty for a road
+    /// and keeps the request small.
+    public init(points: [(latitude: Double, longitude: Double)], meters: Double? = nil, expectedSeconds: Double? = nil) {
+        func round(_ x: Double) -> Double { (x * 1e6).rounded() / 1e6 }
+        self.init(coordinates: points.flatMap { [round($0.latitude), round($0.longitude)] },
+                  meters: meters, expectedSeconds: expectedSeconds)
+    }
+
+    public var pointCount: Int { coordinates.count / 2 }
+
+    /// The points as (latitude, longitude) pairs.
+    public var points: [(latitude: Double, longitude: Double)] {
+        stride(from: 0, to: coordinates.count - 1, by: 2).map { (coordinates[$0], coordinates[$0 + 1]) }
+    }
+
+    /// Two or more real places, and a length and time that are numbers if given.
+    public var isValid: Bool {
+        guard coordinates.count >= 4, coordinates.count % 2 == 0 else { return false }
+        for i in stride(from: 0, to: coordinates.count, by: 2) {
+            let lat = coordinates[i], lon = coordinates[i + 1]
+            guard lat.isFinite, lon.isFinite, (-90...90).contains(lat), (-180...180).contains(lon) else { return false }
+        }
+        return (meters.map { $0.isFinite && $0 >= 0 } ?? true)
+            && (expectedSeconds.map { $0.isFinite && $0 >= 0 } ?? true)
     }
 }
 
@@ -339,6 +415,10 @@ extension RemoteAPI {
     public static let maxAutoStopMinutes = 24 * 60
     /// The longest wait at one stop of a route: a day (the same as `WaitDuration.maxSeconds` on the iPhone).
     public static let maxWaitSeconds: Double = 24 * 3600
+    /// The most road points one route may carry, all legs together (a few hundred kilometres of road).
+    public static let maxRoadPoints = 60_000
+    /// The largest `/route` body a Mac on version 3 or later takes; every other call stays at 64 KB.
+    public static let maxRouteBodyBytes = 4 * 1024 * 1024
 }
 
 public struct PauseRequest: Codable, Sendable, Equatable {

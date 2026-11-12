@@ -29,9 +29,15 @@ extension AppModel {
         return "\(path.points.count)|\(ends)|\(Int(path.length.rounded()))"
     }
 
-    /// Map data for `path`, if it's been loaded for exactly that path.
+    /// Map data for `path`, if it's been loaded for exactly that path. For a route the iPhone sent to be
+    /// driven at the limits, Apple Maps' speed for each leg fills in where OpenStreetMap has no limit (or
+    /// couldn't be reached).
     func roadFeatures(for path: RoutePath) -> RoadFeatures {
-        roadDataPathKey == Self.pathKey(path) ? roadFeatures : .none
+        var features = roadDataPathKey == Self.pathKey(path) ? roadFeatures : .none
+        if followsRemoteLimits {
+            features.zones = SpeedZone.merged(primary: features.zones, fallback: remoteLegZones(along: path))
+        }
+        return features
     }
 
     /// The map data for the route as it plays has loaded.
@@ -45,7 +51,9 @@ extension AppModel {
 
     func tripSettings(paceFactor: Double = 1) -> TripSettings {
         let top = max(0.1, effectiveRouteSpeed)
-        let profile = MotionProfile.forSpeed(top)
+        // The iPhone asked for each road at its limit: a car, however slow the speed for unknown roads.
+        let atLimits = followsRemoteLimits
+        let profile = atLimits ? .drive : MotionProfile.forSpeed(top)
         guard prefs.realisticTrips else {
             return TripSettings(topSpeed: top, profile: profile, trafficLights: false, stopSigns: false,
                                 slowForTurns: false, speedLimits: false, breaks: false,
@@ -56,11 +64,12 @@ extension AppModel {
         let traffic = ((remoteTrafficOverride ?? prefs.tripTimeOfDayTraffic) && profile.kind == .drive) ? Congestion.factor(at: Date()) : 1
         return TripSettings(topSpeed: top, profile: profile,
                             trafficLights: prefs.tripTrafficLights, stopSigns: prefs.tripStopSigns,
-                            slowForTurns: prefs.tripSlowForTurns, speedLimits: prefs.tripSpeedLimits,
+                            slowForTurns: prefs.tripSlowForTurns, speedLimits: prefs.tripSpeedLimits || atLimits,
                             breaks: prefs.tripBreaks, speedVariation: prefs.speedVariation, paceFactor: paceFactor,
                             trafficFactor: traffic,
                             // A road route without its map data: sharp turns stand in for junctions.
-                            guessJunctions: followRoads && !roadDataReady)
+                            guessJunctions: followRoads && !roadDataReady,
+                            cruiseAtLimits: atLimits)
     }
 
     /// Pacing by duration: the time one lap of the planner should take.
@@ -144,7 +153,7 @@ extension AppModel {
         lapTimeCache = nil
         // Speed bumps alone are worth a lookup too, but only for driving.
         let wanted = prefs.tripTrafficLights || prefs.tripStopSigns || prefs.tripSpeedLimits
-            || (prefs.tripSlowForTurns && travelMode == .driving)
+            || (prefs.tripSlowForTurns && travelMode == .driving) || followsRemoteLimits
         guard prefs.realisticTrips, wanted, waypoints.count >= 2, routeGeometry.count >= 2 else {
             roadDataTask?.cancel()
             roadDataState = .off
@@ -190,7 +199,7 @@ extension AppModel {
                 // Some pieces couldn't be checked: try them again later (the rest is cached).
                 if !features.complete { self.scheduleRoadDataRetry(for: pending) }
                 if var trip = self.trip, Self.pathKey(trip.planner.path) == key {
-                    trip.update(features: features)
+                    trip.update(features: self.roadFeatures(for: trip.planner.path))
                     self.trip = trip
                 }
             } catch {

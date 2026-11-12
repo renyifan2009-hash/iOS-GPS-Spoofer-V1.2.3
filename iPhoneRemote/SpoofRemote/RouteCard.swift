@@ -234,9 +234,9 @@ struct RouteCardView: View {
         .font(.subheadline)
     }
 
-    /// Speed limits come into it when this iPhone drives like a person (the Mac's routes don't have road data yet).
+    /// Speed limits come into it when driving like a person on roads, here or on a Mac new enough to take them.
     private var followsLimitsHere: Bool {
-        route.driving && route.natural && route.followRoads && connection.executionName != "Mac"
+        route.driving && route.natural && route.followRoads && connection.drivesAtSpeedLimits
     }
 
     /// A Mac before protocol version 2 drives a one-way route straight off, whatever the start's wait says.

@@ -137,7 +137,7 @@ duplicating it.
 | first `POST /start` | `Pymobiledevice3.selectDevice(udid:connection:)` → `SpoofSession(pmd:device:transport:engine:python:callbackQueue:)` → `SpoofSession.start(at:)` |
 | `POST /location` or `/start` while running | `SpoofSession.move(to:)` (one message with the live engine) |
 | `POST /stop` | `SpoofSession.stop()` (restores the real location) |
-| `POST /route` | `RouteRunner` over the planned legs, played through `SpoofSession.move(to:)` |
+| `POST /route` | `RouteRunner` over the roads the iPhone sent (`RoadRoute`; straight lines without them), after `OverpassLoader` looks up their lights, signs and limits (`planning`, 20 s at most), played through `SpoofSession.move(to:)` |
 | `POST /joystick` | a 4 Hz timer that applies the latest heading and speed with `SpoofSession.move(to:)`; lets go after 1.5 s of silence |
 | `POST /pause` | the route's clock stops and resumes (`routePausedAt`) |
 | `POST /autostop` | the `Killswitch` rule, armed for N minutes |
@@ -175,7 +175,10 @@ POST /start       (same body, optional: without one it starts at the last locati
 POST /stop
 POST /route       {"waypoints": [{"latitude": 37.33, "longitude": -122.01, "wait": 60}, …], "followRoads": true,
                    "travelMode": "driving", "loopMode": "once", "speed": 13.9, "realistic": true,
-                   "timeOfDayTraffic": false, "name": "Commute"}
+                   "timeOfDayTraffic": false, "name": "Commute",
+                   "followSpeedLimits": true,                                   (version 3)
+                   "legs": [{"coordinates": [37.33, -122.01, 37.331, -122.012, …], (version 3: lat, lon, lat, lon…)
+                             "meters": 2140, "expectedSeconds": 190}, null, …]}
 POST /joystick    {"heading": 90, "speed": 1.4}        (degrees clockwise from north, metres per second)
 POST /pause       {"paused": true}
 POST /autostop    {"minutes": 30}                      (0 turns it off)
@@ -211,7 +214,8 @@ stop-after timer fires, in seconds since 1970) and, while a route stands still,
 `stop` (one of your stops; `stop` counts the start as 0), `light`, `sign`,
 `yield`, `crossing`, `break`, `turnaround` or `arrived`; `remaining` is seconds
 left (none when arrived). `apiVersion` is the protocol version the Mac speaks
-(2 since waits before leaving; a Mac before that leaves it out). These are all
+(2 since waits before leaving, 3 since routes carry their roads; a Mac before
+2 leaves it out). These are all
 optional: a Mac from before they existed leaves them out, and the iPhone app
 copes. If you set a wait before leaving and the Mac is older than protocol 2,
 the iPhone says so under **Leave**, because that Mac drives off right away. The headless
@@ -238,7 +242,32 @@ answer 409 until a location is being held, and pause until a route is running; t
 engine, so on the classic engine it answers 409 with the reason.
 
 `POST /route` plans the legs on the Mac (it can take a while with roads on; the
-status says `planning`) and returns as soon as the route is accepted. A bad
+status says `planning`) and returns as soon as the route is accepted.
+
+**Roads and speed limits (protocol 3).** With roads on, an iPhone talking to a
+Mac on protocol 3 or later asks its own Apple Maps for each leg first and sends
+them as `legs`: `legs[i]` runs from waypoint `i` to `i + 1`, and a loop whose
+last stop isn't its first has one more leg back to the start. Each leg's
+`coordinates` are latitude, longitude pairs (six decimals), starting at the
+stop it leaves and ending at the one it reaches; `null` is a leg Apple Maps had
+no road for. The Mac drives those roads: the Mac app takes them instead of
+asking Apple Maps again (and asks for a `null` leg itself), and `iosgpsspoof
+serve`, which has no Apple Maps, drives them as sent (a `null` leg is straight).
+Legs that don't fit the stops (a wrong count, an end more than 150 m from its
+stop, more than 60,000 points in all) are ignored, never an error. Because of
+them `/route` takes bodies up to 4 MB; every other call stays at 64 KB, and an
+older Mac turns a body over 64 KB away, so the iPhone sends legs only to a Mac
+that reports `apiVersion` 3 or later.
+
+`followSpeedLimits` (driving like a person on roads) drives each road at about
+its OpenStreetMap limit, times the driver's habit, even above `speed`, which
+then only counts where no limit is known. Where OpenStreetMap has no limit, or
+its public servers are busy (they answer 502 when full), each leg's
+`expectedSeconds` from Apple Maps stands in, the same as on the iPhone on its
+own. Without it, `speed` stays the top speed and limits only slow the route,
+as before. The iPhone shows **Drive at the speed limit** for a Mac only once
+it reports protocol 3. The Mac app applies it only while its own
+**Drive like a real person** is on. A bad
 route (fewer than two points, a point off the planet, a negative wait or one
 longer than a day) is a 400. A Mac from before routes existed answers 501, and the iPhone app says to
 update the Mac app. Errors are a non-2xx status with `{"error": "message"}`: 400 bad

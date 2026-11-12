@@ -23,17 +23,30 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
         public var engine: EngineKind
         public var retryAfterFailure: TimeInterval
         public var serverName: String
+        /// Where a route on roads gets its traffic lights, signs and speed limits (OpenStreetMap). nil: none,
+        /// so sharp turns stand in for junctions and only Apple Maps' speeds count.
+        public var roadData: OverpassLoader?
 
         public init(udid: String? = nil, connection: ConnectionFilter = .any, transport: Transport = .automatic,
                     engine: EngineKind = .classic, retryAfterFailure: TimeInterval = 15,
-                    serverName: String = BonjourService.computerName) {
+                    serverName: String = BonjourService.computerName,
+                    roadData: OverpassLoader? = nil) {
             self.udid = udid
             self.connection = connection
             self.transport = transport
             self.engine = engine
             self.retryAfterFailure = retryAfterFailure
             self.serverName = serverName
+            self.roadData = roadData
         }
+
+        /// The public Overpass servers, with the Mac app's cache: what `iosgpsspoof serve` uses. A route
+        /// waits this long at most for them before it sets off; a busy server (they answer 502 when full)
+        /// costs it no more than that.
+        public static var defaultRoadData: OverpassLoader { OverpassLoader(
+            userAgent: "AnyWhere-serve (+https://github.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3)",
+            cacheDirectory: AppSupport.directory.appendingPathComponent("osm-cache", isDirectory: true),
+            timeBudget: 20) }
     }
 
     public var onLog: (@Sendable (LogLevel, String) -> Void)?
@@ -54,6 +67,9 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
     private var routeStartedAt: Date?
     private var routeTimer: DispatchSourceTimer?
     private var routePausedAt: Date?
+    /// A route on roads waiting for its OpenStreetMap data, which a newer route or a stop cancels.
+    private var routePlanning: Task<Void, Never>?
+    private var routeGeneration = 0
     private var joystick: JoystickMotion?
     private var joystickPoint: GeoPoint?
     private var joystickTimer: DispatchSourceTimer?
@@ -148,10 +164,14 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
     }
 
     public func driveRoute(_ request: RouteRequest) async throws -> RemoteStatus {
-        try await onQueueThrowing {
+        // On roads the iPhone sent, driving like a person: first look up their lights, signs and limits.
+        let roadData = request.realistic && RoadRoute(request: request) != nil ? options.roadData : nil
+        return try await onQueueThrowing {
             let runner: RouteRunner
+            let path: RoutePath
             do {
                 runner = try RouteRunner.build(from: request)
+                path = try RouteRunner.playedPath(for: request)
             } catch {
                 throw RemoteControlError((error as? LocalizedError)?.errorDescription ?? "That route isn't valid.",
                                          status: 400)
@@ -160,14 +180,13 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
                 throw RemoteControlError("Still restoring the real location. Try again in a moment.")
             }
             self.cancelJoystick()
-            self.route = runner
-            self.routeStartedAt = Date()
-            self.routePausedAt = nil
+            self.cancelRoute()
             let first = runner.start
             self.target = LocationRequest(latitude: first.latitude, longitude: first.longitude, name: runner.name)
             self.wantsLocation = true
             self.beginKeepAwake()
-            let note = "driving a \(request.waypoints.count)-point route"
+            let roads = RoadRoute(request: request).map { " on roads (\($0.roadLegs) of \(request.legs?.count ?? 0) legs)" } ?? ""
+            let note = "driving a \(request.waypoints.count)-point route\(roads)"
             if self.session == nil {
                 let device = try self.chooseDevice()
                 let session = self.makeSession(device: device)
@@ -179,9 +198,60 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
                 self.log(.info, note)
                 if case .active = self.state, let session = self.session { session.move(to: first) }
             }
-            self.startRouteTimer()
+            guard let roadData else {
+                self.begin(runner)
+                return self.makeStatus()
+            }
+            // Hold the start while the map data loads (`planning`), then set off with it, or without it if
+            // the servers are busy or too slow: the plain plan above is the fallback.
+            let generation = self.routeGeneration
+            self.routePlanning = Task { [weak self] in
+                let driving = request.travelMode == "driving"
+                var features = RoadFeatures.none
+                var problem: String?
+                do {
+                    features = try await roadData.features(along: path, roads: driving)
+                } catch {
+                    problem = String(describing: error)
+                }
+                self?.queue.async { [weak self] in
+                    guard let self, self.routeGeneration == generation, self.wantsLocation else { return }
+                    self.routePlanning = nil
+                    var planned = runner
+                    if problem == nil, let built = try? RouteRunner.build(from: request, features: features) {
+                        planned = built
+                        self.log(.info, Self.describe(features, length: path.length))
+                    } else {
+                        self.log(.warning, "couldn't load OpenStreetMap data (\(problem ?? "unreadable")), so this route "
+                                 + (RouteRunner.followsLimits(request) ? "uses Apple Maps' speeds and " : "")
+                                 + "guesses its traffic lights")
+                    }
+                    self.target = LocationRequest(latitude: planned.start.latitude, longitude: planned.start.longitude,
+                                                  name: planned.name)
+                    self.begin(planned)
+                }
+            }
             return self.makeStatus()
         }
+    }
+
+    /// Play `runner` from now. Confined to `queue`.
+    private func begin(_ runner: RouteRunner) {
+        route = runner
+        routeStartedAt = Date()
+        routePausedAt = nil
+        startRouteTimer()
+    }
+
+    /// "OpenStreetMap: 3 traffic lights, 1 stop sign, speed limits for 80% of the route."
+    static func describe(_ features: RoadFeatures, length: Double) -> String {
+        let lights = features.uniqueCount(of: .trafficSignal)
+        let signs = features.uniqueCount(of: .stopSign)
+        let coverage = Int((features.speedLimitCoverage(of: length) * 100).rounded())
+        var text = "OpenStreetMap: \(lights) traffic light\(lights == 1 ? "" : "s"), \(signs) stop sign\(signs == 1 ? "" : "s")"
+        if coverage > 0 { text += ", speed limits for \(coverage)% of the route" }
+        if !features.complete { text += " (some of it couldn't be checked)" }
+        return text
     }
 
     public func stop() async -> RemoteStatus {
@@ -279,6 +349,9 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
     }
 
     private func cancelRoute() {
+        routeGeneration += 1
+        routePlanning?.cancel()
+        routePlanning = nil
         routeTimer?.cancel()
         routeTimer = nil
         route = nil
@@ -443,7 +516,9 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
         var progress: Double?
         var paused: Bool?
         let now = Date()
-        if spoofing, let route, let started = routeStartedAt {
+        if routePlanning != nil, wantsLocation {
+            activity = "planning"
+        } else if spoofing, let route, let started = routeStartedAt {
             activity = "route"
             progress = route.progress(at: (routePausedAt ?? now).timeIntervalSince(started))
             paused = routePausedAt != nil

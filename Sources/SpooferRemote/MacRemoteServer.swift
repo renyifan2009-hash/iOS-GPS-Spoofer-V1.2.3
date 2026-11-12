@@ -335,6 +335,11 @@ struct HTTPRequest: Sendable, Equatable {
     static let maxHeaderBytes = 16 * 1024
     static let maxBodyBytes = 64 * 1024
 
+    /// A route can carry its roads, so it may be bigger than any other call.
+    static func maxBodyBytes(for path: String) -> Int {
+        path == RemoteAPI.Path.route ? RemoteAPI.maxRouteBodyBytes : maxBodyBytes
+    }
+
     var bearerToken: String? {
         guard let value = headers["authorization"] else { return nil }
         let parts = value.split(separator: " ", maxSplits: 1)
@@ -369,16 +374,15 @@ struct HTTPRequest: Sendable, Equatable {
         guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else {
             return .invalid(status: 400, message: "Bad Content-Length.")
         }
-        guard length <= maxBodyBytes else {
+        let target = String(requestLine[1])
+        let path = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+            .first.map(String.init) ?? target
+        guard length <= maxBodyBytes(for: path) else {
             return .invalid(status: 413, message: "Request too large.")
         }
         let bodyStart = headerEnd.upperBound
         guard data.endIndex - bodyStart >= length else { return .incomplete }
         let body = Data(data[bodyStart..<(bodyStart + length)])
-
-        let target = String(requestLine[1])
-        let path = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-            .first.map(String.init) ?? target
         return .complete(HTTPRequest(method: String(requestLine[0]).uppercased(), path: path,
                                      headers: headers, body: body))
     }

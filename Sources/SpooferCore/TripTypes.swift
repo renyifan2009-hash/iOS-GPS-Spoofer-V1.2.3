@@ -202,7 +202,8 @@ public enum TripOdds {
 
 /// What a trip does, chosen in the app.
 public struct TripSettings: Sendable, Equatable {
-    /// The chosen speed, m/s: the cruise speed, and the cap when speed limits apply.
+    /// The chosen speed, m/s: the cruise speed, and the cap when speed limits apply (unless
+    /// `cruiseAtLimits`, when it's only the speed where no limit is known).
     public var topSpeed: Double
     public var profile: MotionProfile
     public var trafficLights: Bool
@@ -220,11 +221,14 @@ public struct TripSettings: Sendable, Equatable {
     /// No map data for this road route: treat its sharp turns as junctions,
     /// where a car sometimes waits as if at a red light.
     public var guessJunctions: Bool
+    /// Drive each road at about its limit (times the driver's habit), even above `topSpeed`, which
+    /// then only counts where no limit is known. Off, a limit only ever slows the trip below `topSpeed`.
+    public var cruiseAtLimits: Bool
 
     public init(topSpeed: Double, profile: MotionProfile? = nil, trafficLights: Bool = true,
                 stopSigns: Bool = true, slowForTurns: Bool = true, speedLimits: Bool = true,
                 breaks: Bool = true, speedVariation: Double = 0, paceFactor: Double = 1,
-                trafficFactor: Double = 1, guessJunctions: Bool = false) {
+                trafficFactor: Double = 1, guessJunctions: Bool = false, cruiseAtLimits: Bool = false) {
         self.topSpeed = topSpeed
         self.profile = profile ?? .forSpeed(topSpeed)
         self.trafficLights = trafficLights
@@ -236,6 +240,7 @@ public struct TripSettings: Sendable, Equatable {
         self.paceFactor = paceFactor
         self.trafficFactor = trafficFactor
         self.guessJunctions = guessJunctions
+        self.cruiseAtLimits = cruiseAtLimits
     }
 
     /// Changing these needs a new plan; the others are read every tick.

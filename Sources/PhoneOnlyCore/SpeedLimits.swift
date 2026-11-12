@@ -208,6 +208,15 @@ extension SpeedZone {
         return result.sorted { $0.start < $1.start }
     }
 
+    /// One speed per leg of a route, as stretches: leg `i` runs from `ends[i]` to `ends[i + 1]` (metres along
+    /// the route). A leg with no speed, or no length, gets no stretch.
+    public static func legs(ends: [Double], speeds: [Double?]) -> [SpeedZone] {
+        zip(zip(ends, ends.dropFirst()), speeds).compactMap { span, speed in
+            guard let speed, speed.isFinite, speed > 0, span.1 > span.0 else { return nil }
+            return SpeedZone(start: span.0, end: span.1, speed: speed)
+        }
+    }
+
     /// A cruise speed from Apple Maps' expected travel time for a leg (m/s). That time already
     /// counts the slowing for corners and lights the drive adds itself, so the cruise is a bit above
     /// the average: kept between 10 and 75 mph.

@@ -211,6 +211,9 @@ final class AppModel {
     // MARK: Driven from the iPhone (Settings ▸ iPhone Remote). See AppModel+RemoteControl.swift.
     /// "Slower in rush hour" as the iPhone asked for this route; nil = the Mac's own setting.
     @ObservationIgnored var remoteTrafficOverride: Bool?
+    /// How the iPhone wants the route it sent driven: at each road's limit, with Apple Maps' speed for each
+    /// leg where none is known. Only while the window's stops are still that route's (`activeRemoteRoadPlan`).
+    @ObservationIgnored var remoteRoadPlan: RemoteRoadPlan?
     /// What the iPhone's joystick last asked for. Expires by itself.
     @ObservationIgnored var remoteJoystickMotion: JoystickMotion?
     /// Waiting for the roads of a route the iPhone sent, then starting it.
@@ -690,6 +693,7 @@ final class AppModel {
         remoteRouteTask = nil
         remoteJoystickMotion = nil
         remoteTrafficOverride = nil
+        remoteRoadPlan = nil
         if let sessionActivity { ProcessInfo.processInfo.endActivity(sessionActivity) }
         sessionActivity = nil
         lastDeviceGeocode = nil

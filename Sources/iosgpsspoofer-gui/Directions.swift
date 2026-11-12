@@ -82,6 +82,14 @@ final class DirectionsService {
         return Result(points: points, failedLegs: failed, failure: failure)
     }
 
+    /// A leg found elsewhere (the iPhone's Apple Maps, for a route it sent), so it isn't asked for again
+    /// and the Mac drives the same roads the iPhone showed.
+    func prime(from a: GeoPoint, to b: GeoPoint, mode: TravelMode, points: [GeoPoint]) {
+        guard points.count >= 2 else { return }
+        if cache.count >= 500 { cache.removeAll() }
+        cache[Self.key(a, b, mode)] = points
+    }
+
     private static func key(_ a: GeoPoint, _ b: GeoPoint, _ mode: TravelMode) -> String {
         String(format: "%.6f,%.6f>%.6f,%.6f|", a.latitude, a.longitude, b.latitude, b.longitude) + mode.rawValue
     }

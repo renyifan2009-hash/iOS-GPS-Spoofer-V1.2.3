@@ -13,12 +13,14 @@ public struct LapPlan: Sendable, Equatable {
     public var driverFactor: Double
 
     /// Cruise speed at `s`: the road's limit (times the driver's habit) or the
-    /// top speed, whichever is lower.
+    /// top speed, whichever is lower. With `cruiseAtLimits`, the limit itself
+    /// wherever one is known, and the top speed only where none is.
     public func cruise(at s: Double, settings: TripSettings) -> Double {
         let top = settings.topSpeed * settings.paceFactor
         let traffic = settings.trafficFactor
         guard let index = zoneIndex(at: s) else { return max(0.1, top * traffic) }
-        return max(0.1, min(top, zones[index].speed * driverFactor * settings.paceFactor) * traffic)
+        let limit = zones[index].speed * driverFactor * settings.paceFactor
+        return max(0.1, (settings.cruiseAtLimits ? limit : min(top, limit)) * traffic)
     }
 
     public func zoneIndex(at s: Double) -> Int? {
