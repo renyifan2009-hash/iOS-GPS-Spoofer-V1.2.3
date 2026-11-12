@@ -167,3 +167,52 @@ public enum SpeedLimits {
         return merged
     }
 }
+
+/// A stretch of road with a speed limit.
+public struct SpeedZone: Sendable, Equatable, Codable {
+    public var start: Double
+    public var end: Double
+    /// m/s.
+    public var speed: Double
+
+    public init(start: Double, end: Double, speed: Double) {
+        self.start = start
+        self.end = end
+        self.speed = speed
+    }
+}
+
+extension SpeedZone {
+    /// `primary` where it covers the way, `fallback` in the gaps: sorted, with no overlaps. For the
+    /// iPhone, where a road's own limit (OpenStreetMap) beats Apple Maps' typical speed for the leg.
+    public static func merged(primary: [SpeedZone], fallback: [SpeedZone]) -> [SpeedZone] {
+        let primary = primary.filter { $0.end > $0.start }.sorted { $0.start < $1.start }
+        var result = primary
+        for zone in fallback where zone.end > zone.start {
+            var pieces = [zone]
+            for covered in primary {
+                pieces = pieces.flatMap { piece -> [SpeedZone] in
+                    guard covered.end > piece.start, covered.start < piece.end else { return [piece] }
+                    var left: [SpeedZone] = []
+                    if covered.start > piece.start {
+                        left.append(SpeedZone(start: piece.start, end: covered.start, speed: piece.speed))
+                    }
+                    if covered.end < piece.end {
+                        left.append(SpeedZone(start: covered.end, end: piece.end, speed: piece.speed))
+                    }
+                    return left
+                }
+            }
+            result += pieces
+        }
+        return result.sorted { $0.start < $1.start }
+    }
+
+    /// A cruise speed from Apple Maps' expected travel time for a leg (m/s). That time already
+    /// counts the slowing for corners and lights the drive adds itself, so the cruise is a bit above
+    /// the average: kept between 10 and 75 mph.
+    public static func cruise(meters: Double, expectedSeconds: Double) -> Double? {
+        guard meters.isFinite, expectedSeconds.isFinite, meters > 50, expectedSeconds > 0 else { return nil }
+        return min(75 * SpeedLimits.mph, max(10 * SpeedLimits.mph, meters / expectedSeconds * 1.15))
+    }
+}

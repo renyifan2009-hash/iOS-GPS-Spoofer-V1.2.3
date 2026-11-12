@@ -50,8 +50,8 @@ public struct GeoPoint: Hashable, Sendable, Codable {
 public enum Geo {
     public static let earthRadius = 6_371_000.0
 
-    @inline(__always) static func radians(_ degrees: Double) -> Double { degrees * .pi / 180 }
-    @inline(__always) static func degrees(_ radians: Double) -> Double { radians * 180 / .pi }
+    @inline(__always) package static func radians(_ degrees: Double) -> Double { degrees * .pi / 180 }
+    @inline(__always) package static func degrees(_ radians: Double) -> Double { radians * 180 / .pi }
 
     /// Great-circle (haversine) distance in metres.
     public static func distance(_ a: GeoPoint, _ b: GeoPoint) -> Double {

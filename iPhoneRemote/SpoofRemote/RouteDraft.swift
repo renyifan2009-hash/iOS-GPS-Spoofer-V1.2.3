@@ -40,6 +40,12 @@ final class RouteDraft {
     /// Drive like a real person: ease off and on, slow for corners, stop at some lights and signs, and
     /// (on this iPhone) natural GPS wobble. Off, the route keeps one speed on a clean line.
     var natural = true
+    /// Driving like a person on this iPhone: each road at about its speed limit (from OpenStreetMap),
+    /// and the chosen speed only where no limit is known. Remembered between routes.
+    var followSpeedLimits = UserDefaults.standard.object(forKey: RouteDraft.followSpeedLimitsKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(followSpeedLimits, forKey: Self.followSpeedLimitsKey) }
+    }
+    static let followSpeedLimitsKey = "route.followSpeedLimits"
     /// The name it was saved or loaded under, if any.
     var name: String?
 

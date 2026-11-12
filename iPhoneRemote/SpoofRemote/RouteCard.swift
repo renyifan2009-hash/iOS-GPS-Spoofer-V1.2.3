@@ -209,12 +209,16 @@ struct RouteCardView: View {
             if route.driving, connection.executionName == "Mac" {
                 Toggle("Slower in rush hour", isOn: $route.timeOfDayTraffic)
             }
+            if followsLimitsHere {
+                Toggle("Drive at the speed limit", isOn: $route.followSpeedLimits)
+            }
 
             HStack(spacing: 12) {
                 Text("Speed")
                 Slider(value: speedInShownUnits, in: units.routeRange(driving: route.driving),
                        step: units.routeStep(driving: route.driving))
-                    .accessibilityLabel("Top speed")
+                    .accessibilityLabel(followsLimitsHere && route.followSpeedLimits
+                                        ? "Speed where the limit isn't known" : "Top speed")
                     .accessibilityValue(units.text(kmh: route.speedKmh))
                 Text(units.text(kmh: route.speedKmh))
                     .font(.system(.subheadline, design: .rounded).monospacedDigit())
@@ -223,6 +227,11 @@ struct RouteCardView: View {
             }
         }
         .font(.subheadline)
+    }
+
+    /// Speed limits come into it when this iPhone drives like a person (the Mac's routes don't have road data yet).
+    private var followsLimitsHere: Bool {
+        route.driving && route.natural && route.followRoads && connection.executionName != "Mac"
     }
 
     /// A Mac before protocol version 2 drives a one-way route straight off, whatever the start's wait says.

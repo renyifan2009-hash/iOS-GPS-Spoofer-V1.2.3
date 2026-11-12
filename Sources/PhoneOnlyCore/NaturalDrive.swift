@@ -3,7 +3,8 @@ import Foundation
 /// Drives a `StandaloneRoute` like a person would, for the iPhone-only mode: it pulls away gently,
 /// slows for corners and before each stop, wanders a little around the chosen speed, and now and then
 /// stops at a corner for a red light or a stop sign (a walk waits to cross instead). The chosen speed
-/// is the top speed.
+/// is the top speed, unless it's given the roads' speed limits: then it drives each road at about its
+/// limit, the way people do (a little under or over), and the chosen speed only where no limit is known.
 ///
 /// It runs a route clock: `elapsed` is the route's own timeline (at full speed), which this advances
 /// more slowly than real time whenever the car is slower than its top speed. Waits at your stops run
@@ -29,6 +30,8 @@ public struct NaturalDrive: Sendable {
 
     public let route: StandaloneRoute
     public let driving: Bool
+    /// The roads' limits along one pass (metres as `StandaloneRoute.meters(at:)` counts them, m/s).
+    public let speedLimits: [SpeedZone]
     private(set) public var elapsed = 0.0
     /// Speed as a share of the top speed.
     private var share = 0.0
@@ -41,10 +44,36 @@ public struct NaturalDrive: Sendable {
     private var pass = 0
     private var random: NaturalRandom
 
-    public init(route: StandaloneRoute, driving: Bool, seed: UInt64 = .random(in: 0 ... .max)) {
+    /// Speeds are shares of `route.speed`; a road's limit can be well above it, so the share can be too.
+    private let topShare: Double
+
+    public init(route: StandaloneRoute, driving: Bool, speedLimits: [SpeedZone] = [],
+                seed: UInt64 = .random(in: 0 ... .max)) {
         self.route = route
         self.driving = driving
+        let zones = driving ? speedLimits.filter { $0.end > $0.start && $0.speed.isFinite && $0.speed > 0 }
+                                  .sorted { $0.start < $1.start } : []
+        self.speedLimits = zones
+        topShare = max(1.05, (zones.map(\.speed).max() ?? 0) / route.speed * 1.06)
         random = NaturalRandom(seed: seed)
+        if !zones.isEmpty {
+            cruise = 0.98
+            cruiseTarget = 0.98
+        }
+    }
+
+    /// The speed limit where the car is, in m/s, or nil where none is known.
+    public func limit(at elapsed: Double) -> Double? {
+        guard !speedLimits.isEmpty else { return nil }
+        let meters = route.meters(at: elapsed)
+        var low = 0, high = speedLimits.count - 1
+        var found: Int?
+        while low <= high {
+            let mid = (low + high) / 2
+            if speedLimits[mid].start <= meters { found = mid; low = mid + 1 } else { high = mid - 1 }
+        }
+        guard let found, meters < speedLimits[found].end else { return nil }
+        return speedLimits[found].speed
     }
 
     /// Move the car on by `dt` seconds of real time.
@@ -69,7 +98,7 @@ public struct NaturalDrive: Sendable {
         let target = targetShare()
         let rate = target > share ? (driving ? 0.16 : 0.9) : (driving ? 0.4 : 1.4)
         share += max(-rate * dt, min(rate * dt, target - share))
-        share = min(max(share, 0), 1.05)
+        share = min(max(share, 0), topShare)
         let before = elapsed
         elapsed += dt * share
         decideCorners(from: before, to: elapsed)
@@ -80,11 +109,16 @@ public struct NaturalDrive: Sendable {
         return Step(elapsed: elapsed, speed: share * route.speed, reason: nil, remaining: nil)
     }
 
-    /// Around the chosen speed, picking a new pace now and then the way a driver eases on and off.
+    /// Around the chosen speed, picking a new pace now and then the way a driver eases on and off. With
+    /// speed limits, a share of the limit: people drive near it, a little under or a little over.
     private mutating func wanderCruise(_ dt: Double) {
         cruiseClock -= dt
         if cruiseClock <= 0 {
-            cruiseTarget = driving ? random.uniform(0.84, 1.0) : random.uniform(0.82, 1.05)
+            if !speedLimits.isEmpty {
+                cruiseTarget = random.uniform(0.92, 1.04)
+            } else {
+                cruiseTarget = driving ? random.uniform(0.84, 1.0) : random.uniform(0.82, 1.05)
+            }
             cruiseClock = random.uniform(12, 35)
         }
         cruise += (cruiseTarget - cruise) * min(1, dt / 6)
@@ -93,7 +127,10 @@ public struct NaturalDrive: Sendable {
     /// The share of top speed to aim for: the cruise, less for a corner or a stop coming up. It never
     /// aims for nothing while moving, or the car would stop short of the stop it slows for.
     private func targetShare() -> Double {
-        let lookahead = driving ? max(40, route.speed * 5) : 8
+        // On a road with a known limit, the cruise is a share of that limit; elsewhere of the chosen speed.
+        let road = limit(at: elapsed).map { $0 / route.speed } ?? 1
+        let cruise = min(topShare, self.cruise * road)
+        let lookahead = driving ? max(40, route.speed * max(1, road) * 5) : 8
         guard let ahead = route.slowdownAhead(at: elapsed, within: lookahead) else { return cruise }
         let atCorner: Double
         if ahead.degrees >= 180 {

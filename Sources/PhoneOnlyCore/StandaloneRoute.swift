@@ -25,6 +25,10 @@ public struct StandaloneRoute: Sendable {
     public let repeats: Bool
     public let speed: Double
     public let start: Point
+    /// Metres of travel in one pass (there and back for a ping-pong route); waits add none.
+    public let passMeters: Double
+    /// Metres travelled by the start of each segment.
+    private let metersAtSegment: [Double]
 
     /// A corner on the path: where it is on the timeline (at full speed, within one pass) and how sharp.
     public struct Turn: Equatable, Sendable {
@@ -83,6 +87,15 @@ public struct StandaloneRoute: Sendable {
               elapsed.isFinite, elapsed > 0 else { throw Problem.invalid }
         self.segments = segments; self.duration = elapsed; self.repeats = repeatMode != "once"
         self.speed = speed; self.start = first
+        var travelled = 0.0
+        var startMeters: [Double] = []
+        startMeters.reserveCapacity(segments.count)
+        for segment in segments {
+            startMeters.append(travelled)
+            if segment.stop == nil { travelled += (segment.end - segment.start) * speed }
+        }
+        self.metersAtSegment = startMeters
+        self.passMeters = travelled
         self.turns = Self.findTurns(in: segments, speed: speed)
     }
 
@@ -194,6 +207,29 @@ public struct StandaloneRoute: Sendable {
         let p = PhoneGeo.moved(latitude: segment.from.latitude, longitude: segment.from.longitude,
                                meters: meters * fraction, bearing: Self.bearing(segment.from, segment.to))
         return (Point(p.latitude, p.longitude), t / duration, false, true)
+    }
+
+    /// Metres along the current pass at `elapsed`, as `passPath` measures them. Standing at a stop is
+    /// where the stop is.
+    public func meters(at elapsed: Double) -> Double {
+        let t = passTime(elapsed)
+        if t >= duration { return passMeters }
+        var low = 0, high = segments.count - 1
+        while low < high {
+            let mid = (low + high) / 2
+            if segments[mid].end <= t { low = mid + 1 } else { high = mid }
+        }
+        let segment = segments[low]
+        guard segment.stop == nil else { return metersAtSegment[low] }
+        return metersAtSegment[low] + min(max(0, t - segment.start), segment.end - segment.start) * speed
+    }
+
+    /// The path of one pass, in order (there and back for a ping-pong route): what to look up the
+    /// roads and speed limits of.
+    public var passPath: [Point] {
+        var points = [start]
+        for segment in segments where segment.stop == nil && points.last != segment.to { points.append(segment.to) }
+        return points
     }
 
     /// While the route stands at one of its waypoints `elapsed` seconds in: which one (0 is the start, so a wait

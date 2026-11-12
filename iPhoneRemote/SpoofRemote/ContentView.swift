@@ -774,13 +774,15 @@ struct ContentView: View {
                         RouteProgressCardView(route: route, connection: motion)
                     } else {
                         RouteCardView(route: route, connection: motion, library: routeLibrary)
-                        Text(route.natural ? "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
-                               : "This iPhone follows the route at the selected speed, with waits at your stops.")
+                        Text(phoneRouteNote)
                             .font(.footnote).foregroundStyle(.secondary)
                         Button {
                             guard requirePro(), let request = route.request() else { return }
                             let snapshot = route.snapshot(named: route.name ?? "iPhone route")
-                            Task { if await motion.driveRoute(request) { routeLibrary.recordRecent(snapshot) } }
+                            let limits = route.driving && route.natural && route.followRoads && route.followSpeedLimits
+                            Task {
+                                if await motion.driveRoute(request, followSpeedLimits: limits) { routeLibrary.recordRecent(snapshot) }
+                            }
                         } label: { Label("Drive Route", systemImage: "play.fill").frame(maxWidth: .infinity) }
                         .prominentButton()
                         .disabled(!route.canDrive || motion.isWorking)
@@ -912,6 +914,16 @@ struct ContentView: View {
             }
         }
         .disabled(phone.isWorking)
+    }
+
+    /// Under the iPhone's route card: how it will drive.
+    private var phoneRouteNote: String {
+        guard route.natural else { return "This iPhone follows the route at the selected speed, with waits at your stops." }
+        guard route.driving, route.followRoads, route.followSpeedLimits else {
+            return "This iPhone drives it like a person: easing off for corners, stopping at some lights, with natural GPS."
+        }
+        return "This iPhone drives each road at about its speed limit (OpenStreetMap's), easing off for corners and "
+            + "stopping at some lights. Speed is for roads with no known limit."
     }
 
     private func setPhone(_ place: Place) {
