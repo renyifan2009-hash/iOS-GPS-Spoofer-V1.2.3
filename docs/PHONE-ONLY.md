@@ -35,7 +35,7 @@ The simulated location lasts only while AnyWhere's developer connection is open,
 - silent audio mixed with other sound (Settings ▸ Stay on when locked), health-checked every 2 seconds;
 - a notification if the connection drops while the screen is off.
 
-LocalDevVPN opens by itself when AnyWhere opens and the developer port doesn't answer (`localdevvpn://enable?scheme=anywhere`; it comes straight back). Turn that off in Settings.
+LocalDevVPN opens by itself when AnyWhere opens and the developer port doesn't answer, and when Start finds it off (`localdevvpn://enable?scheme=anywhere`; it comes straight back, and Start waits a few seconds for it to connect). Stop turns it off again (`localdevvpn://disable?scheme=anywhere`). Each can be turned off in Settings. AnyWhere can't turn it off when it's closed: iOS doesn't let an app open another app from the background, and a held location needs LocalDevVPN while other apps are in use.
 
 ## The 7-day signing
 

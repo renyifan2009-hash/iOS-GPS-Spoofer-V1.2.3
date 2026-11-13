@@ -52,6 +52,25 @@ private actor ProbeGate {
     func finish() { continuation?.resume(returning: DeveloperPorts(remotePairing: [49152], lockdown: true)); continuation = nil }
 }
 
+/// A pretend LocalDevVPN: off until turned on, then answering from the `answersAfter`-th look on.
+private final class FakeVPN: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+    private var looksSinceOn = 0
+    private(set) var looks = 0
+    private(set) var turnOns = 0
+    var answersAfter = 1
+    func turnOn() { lock.withLock { on = true; turnOns += 1 } }
+    func probe() -> DeveloperPorts {
+        lock.withLock {
+            looks += 1
+            guard on else { return DeveloperPorts() }
+            looksSinceOn += 1
+            return looksSinceOn >= answersAfter ? DeveloperPorts(lockdown: true) : DeveloperPorts()
+        }
+    }
+}
+
 private final class TestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var date = Date()
@@ -295,6 +314,63 @@ final class StandaloneControlTests: XCTestCase {
         phone.networkChanged(cellularOnly: false)
         XCTAssertEqual(phone.lastError, "Connection lost. Reconnecting…")
         await phone.stop()
+    }
+
+    func testStartTurnsLocalDevVPNOnAndWaitsForItToConnect() async throws {
+        let engine = FakeDevice(), vpn = FakeVPN()
+        vpn.answersAfter = 3   // connecting takes a few looks
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { vpn.probe() }, recoveryDelay: .milliseconds(10))
+        phone.turnOnVPN = { vpn.turnOn(); return true }
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
+        XCTAssertTrue(started, "Start waits for LocalDevVPN instead of failing")
+        XCTAssertEqual(vpn.turnOns, 1)
+        XCTAssertEqual(engine.attempts, 1)
+        XCTAssertNil(phone.lastError)
+        await phone.stop()
+    }
+
+    func testStartGivesUpWhenLocalDevVPNNeverConnects() async throws {
+        let engine = FakeDevice(), vpn = FakeVPN()
+        vpn.answersAfter = .max
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { vpn.probe() }, recoveryDelay: .milliseconds(10))
+        phone.turnOnVPN = { vpn.turnOn(); return true }
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
+        XCTAssertFalse(started)
+        XCTAssertEqual(vpn.looks, 1 + OnDeviceController.looksWhileLocalDevVPNStarts, "a few looks, then it stops")
+        XCTAssertEqual(engine.attempts, 0)
+        XCTAssertEqual(phone.lastError, TunnelFailure.unreachableExplanation)
+    }
+
+    func testOnCellularDataAloneStartDoesNotWaitForLocalDevVPN() async throws {
+        let engine = FakeDevice(), vpn = FakeVPN()
+        vpn.answersAfter = .max   // cellular: nothing answers even with it on
+        let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
+                                       developerPortProbe: { vpn.probe() }, recoveryDelay: .milliseconds(10))
+        phone.networkChanged(cellularOnly: true)
+        phone.turnOnVPN = { vpn.turnOn(); return true }
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
+        XCTAssertFalse(started)
+        XCTAssertEqual(vpn.turnOns, 1, "turned on, so it's connected before Airplane Mode")
+        XCTAssertEqual(vpn.looks, 2, "one more look, as before")
+        XCTAssertEqual(phone.lastError, TunnelFailure.cellularExplanation)
+    }
+
+    func testStopTellsTheAppOnlyWhenALocationWasStopped() async throws {
+        let engine = FakeDevice()
+        let phone = try phone(engine)
+        var stopped = 0
+        phone.onStopped = { stopped += 1 }
+        await phone.stop()
+        XCTAssertEqual(stopped, 0, "nothing was held")
+        let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
+        XCTAssertTrue(started)
+        await phone.stop()
+        XCTAssertEqual(stopped, 1)
+        XCTAssertEqual(engine.clears, 1, "after the real location was put back")
+        await phone.stop()
+        XCTAssertEqual(stopped, 1)
     }
 
     func testEachLegsTypicalSpeedCoversItsStretchThereAndBack() throws {

@@ -141,6 +141,9 @@ struct ContentView: View {
                 LocalAlerts.connectionLost()
                 if !phone.onCellularOnly { LocalDevVPN.turnOnIfNeeded() }
             }
+            // LocalDevVPN goes on for Start and off at Stop (each unless Settings says not to).
+            phone.turnOnVPN = { LocalDevVPN.turnOnToStart(cellularOnly: phone.onCellularOnly) }
+            phone.onStopped = { LocalDevVPN.turnOffAfterStop() }
             LocalAlerts.scheduleSigningReminder(expiry: SigningStatus.expiry)
             Task { await licenses.refreshIfDue() }
             // (A pairing file that was opened first has already shown the setup screen.)
@@ -282,7 +285,9 @@ struct ContentView: View {
     }
 
     /// Is LocalDevVPN on? If not, and the setting allows, open it: it turns on and comes back.
-    /// Not on cellular data alone: LocalDevVPN is likely on already, and iOS turns it away there.
+    /// On cellular data alone nothing answers even with it on, so there only if AnyWhere hasn't turned it
+    /// on yet: it can't connect there, but it has to be on before Airplane Mode for that to work.
+    /// While reconnecting on cellular it was on already, so it isn't opened then.
     private func checkVPN(openIfOff: Bool = true) async {
         guard source == .thisPhone, phone.isSetUp else { return }
         if phone.isReconnecting {
@@ -291,7 +296,8 @@ struct ContentView: View {
         }
         guard !phone.isSpoofing, !phone.isWorking else { return }
         await phone.checkLoopback()
-        if openIfOff, !phone.onCellularOnly, phone.loopbackReachable == false { LocalDevVPN.turnOnIfNeeded() }
+        guard openIfOff, phone.loopbackReachable == false else { return }
+        if !phone.onCellularOnly || !LocalDevVPN.turnedOnHere { LocalDevVPN.turnOnIfNeeded() }
     }
 
     /// Starting a location on this iPhone needs Pro (or the trial) once payments are set up.
