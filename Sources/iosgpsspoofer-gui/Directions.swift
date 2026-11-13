@@ -65,7 +65,8 @@ final class DirectionsService {
                 switch await Self.fetchLeg(from: a, to: b, mode: mode, retries: failure?.isTemporary == true ? 0 : 2) {
                 case .success(let fetched):
                     leg = fetched
-                    cache[key] = fetched
+                    // A leg primed meanwhile (the iPhone's, for a route it sent) is the one to keep.
+                    if cache[key] == nil { cache[key] = fetched }
                     if cache.count > 500 { cache.removeAll() }
                 case .failure(let reason):
                     leg = [a, b]
@@ -80,6 +81,14 @@ final class DirectionsService {
             points += leg
         }
         return Result(points: points, failedLegs: failed, failure: failure)
+    }
+
+    /// A leg found elsewhere (the iPhone's Apple Maps, for a route it sent), so it isn't asked for again
+    /// and the Mac drives the same roads the iPhone showed.
+    func prime(from a: GeoPoint, to b: GeoPoint, mode: TravelMode, points: [GeoPoint]) {
+        guard points.count >= 2 else { return }
+        if cache.count >= 500 { cache.removeAll() }
+        cache[Self.key(a, b, mode)] = points
     }
 
     private static func key(_ a: GeoPoint, _ b: GeoPoint, _ mode: TravelMode) -> String {

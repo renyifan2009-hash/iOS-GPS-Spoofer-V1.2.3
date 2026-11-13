@@ -565,12 +565,13 @@ struct ContentView: View {
             Button {
                 driveRoute()
             } label: {
-                Label(connection.isWorking ? "Starting…" : "Drive Route", systemImage: route.driving ? "car.fill" : "figure.walk")
+                Label(connection.findingRoads ? "Finding roads…" : connection.isWorking ? "Starting…" : "Drive Route",
+                      systemImage: route.driving ? "car.fill" : "figure.walk")
                     .frame(maxWidth: .infinity)
                     .contentTransition(.opacity)
             }
             .prominentButton()
-            .disabled(!route.canDrive || connection.isWorking || !connection.isOnline)
+            .disabled(!route.canDrive || connection.isWorking || connection.findingRoads || !connection.isOnline)
         }
     }
 
@@ -729,7 +730,10 @@ struct ContentView: View {
 
     private func driveRoute() {
         let name = route.name ?? "Drive on \(Date.now.formatted(date: .abbreviated, time: .shortened))"
-        guard let request = route.request(name: name) else { return }
+        guard var request = route.request(name: name) else { return }
+        if connection.drivesAtSpeedLimits, route.driving, route.natural, route.followRoads {
+            request.followSpeedLimits = route.followSpeedLimits
+        }
         let snapshot = route.snapshot(named: name)
         Task {
             if await connection.driveRoute(request) { routeLibrary.recordRecent(snapshot) }

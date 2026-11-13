@@ -19,11 +19,12 @@ public enum RouteRunnerError: LocalizedError {
 /// seconds, which the remote controller sends on. It reuses SpooferCore's trip
 /// engine the same way the CLI's `--realistic` does.
 ///
-/// For now the legs between waypoints are straight lines; `realistic` adds
-/// gradual speeding up and braking, slowing for corners, and waits at the stops
-/// you set. Road-snapping and OpenStreetMap lights/signs/limits are a later
-/// enhancement (they need map data the phone doesn't send yet). There's no UI
-/// and no device here — just geometry and timing — so it's testable on its own.
+/// The legs follow the roads the iPhone sent with the route (`RouteRequest.legs`, from its Apple Maps), or
+/// are straight lines when it sent none (an older iPhone, or roads off). `realistic` adds gradual speeding
+/// up and braking, slowing for corners, and waits at the stops you set; with the route's OpenStreetMap
+/// data (`features`, which the controller loads) it also stops at real lights and signs and keeps to each
+/// road's limit, or drives at it with `followSpeedLimits`. There's no UI and no device here — just
+/// geometry and timing — so it's testable on its own.
 public struct RouteRunner: Sendable, Equatable {
     /// The played track, sorted by time offset.
     public let track: [RoutePoint]
@@ -45,12 +46,35 @@ public struct RouteRunner: Sendable, Equatable {
         self.name = name
     }
 
-    public static func build(from request: RouteRequest, now: Date = Date()) throws -> RouteRunner {
+    /// The path a request plays (closed for a loop): what its OpenStreetMap data is looked up along, so
+    /// the distances in `features` fit `build`.
+    public static func playedPath(for request: RouteRequest) throws -> RoutePath {
+        try layout(of: request).played
+    }
+
+    /// The path through the stops (on the roads sent, if any), where each stop is, and the played path.
+    private static func layout(of request: RouteRequest) throws
+        -> (path: RoutePath, played: RoutePath, roads: RoadRoute?, loop: LoopMode) {
         guard request.isValid else { throw RouteRunnerError.invalid }
-        let points = request.waypoints.map { GeoPoint($0.latitude, $0.longitude) }
         let loop = LoopMode(rawValue: request.loopMode) ?? .once
-        let path = RoutePath(points)
+        let roads = RoadRoute(request: request)
+        let path = roads?.path ?? RoutePath(request.waypoints.map { GeoPoint($0.latitude, $0.longitude) })
         guard path.length > 0 else { throw RouteRunnerError.degenerate }
+        return (path, RoutePlayback(path: path, loopMode: loop).path, roads, loop)
+    }
+
+    /// Drives each road at about its limit: asked for, and driving like a person on roads.
+    public static func followsLimits(_ request: RouteRequest) -> Bool {
+        request.followSpeedLimits == true && request.realistic && request.travelMode == "driving"
+            && (request.followRoads || request.legs != nil)
+    }
+
+    /// `features`: what OpenStreetMap knows along `playedPath(for:)` (none: guessed junctions, and only
+    /// Apple Maps' speeds when following limits).
+    public static func build(from request: RouteRequest, features: RoadFeatures = .none,
+                             now: Date = Date()) throws -> RouteRunner {
+        let (path, played, roads, loop) = try layout(of: request)
+        let points = request.waypoints.map { GeoPoint($0.latitude, $0.longitude) }
 
         let track: [RoutePoint]
         // Waits need the trip engine, so a route with any runs on it even with realistic trips off
@@ -58,20 +82,29 @@ public struct RouteRunner: Sendable, Equatable {
         let hasWaits = request.waypoints.contains { ($0.wait ?? 0) > 0 }
         if request.realistic || hasWaits {
             let top = max(0.1, request.speed)
-            let profile = MotionProfile.forSpeed(top)
+            let atLimits = followsLimits(request)
+            // A car is a car, however slow the speed for unknown roads is set (limits are for cars only).
+            let profile = atLimits ? .drive : MotionProfile.forSpeed(top)
             // Time-of-day traffic slows driving only.
             let traffic = (request.timeOfDayTraffic && profile.kind == .drive) ? Congestion.factor(at: now) : 1
             let settings = request.realistic
                 ? TripSettings(topSpeed: top, profile: profile, trafficFactor: traffic,
-                               // No OSM data here: let sharp turns stand in for junctions
-                               // when the user asked to follow roads.
-                               guessJunctions: request.followRoads)
+                               // Without OSM data, sharp turns stand in for junctions on a road route
+                               // (the planner only guesses when `features` has no lights or signs).
+                               guessJunctions: request.followRoads || roads != nil,
+                               cruiseAtLimits: atLimits)
                 : TripSettings(topSpeed: top, profile: profile, trafficLights: false, stopSigns: false,
                                slowForTurns: false, speedLimits: false, breaks: false)
-            let played = RoutePlayback(path: path, loopMode: loop).path
-            let stops = waypointStops(points: points, path: path, waits: request.waypoints.map(\.wait))
+            var known = features
+            if atLimits, let roads {
+                // Where OpenStreetMap has no limit (or its servers are busy): Apple Maps' speed for the leg.
+                known.zones = SpeedZone.merged(primary: features.zones, fallback: roads.legZones)
+            }
+            let waits = request.waypoints.map(\.wait)
+            let stops = roads.map { waypointStops(distances: $0.stopDistances, waits: waits) }
+                ?? waypointStops(points: points, path: path, waits: waits)
             let planner = TripPlanner(path: played, loopMode: loop, settings: settings,
-                                      features: .none, waypointStops: stops)
+                                      features: request.realistic ? known : .none, waypointStops: stops)
             let trip = TripController(planner: planner)
             track = try RouteBuilder.timedTrack(path: trip.planner.path, loopMode: loop, trip: trip)
         } else {
@@ -89,8 +122,12 @@ public struct RouteRunner: Sendable, Equatable {
     /// Your stops with a wait, by distance along the route.
     static func waypointStops(points: [GeoPoint], path: RoutePath, waits: [Double?]) -> [WaypointStop] {
         guard waits.contains(where: { ($0 ?? 0) > 0 }) else { return [] }
-        let distances = RouteMatcher(path: path).distances(ofWaypoints: points)
-        return points.indices.compactMap { i in
+        return waypointStops(distances: RouteMatcher(path: path).distances(ofWaypoints: points), waits: waits)
+    }
+
+    /// Your stops with a wait, where each stop's distance along the route is already known.
+    static func waypointStops(distances: [Double], waits: [Double?]) -> [WaypointStop] {
+        waits.indices.compactMap { i in
             guard let wait = waits[i], wait > 0, i < distances.count else { return nil }
             return WaypointStop(index: i, distance: distances[i], wait: wait)
         }

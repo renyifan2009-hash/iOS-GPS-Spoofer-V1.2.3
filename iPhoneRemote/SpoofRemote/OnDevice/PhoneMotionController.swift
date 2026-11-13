@@ -10,6 +10,7 @@ import RemoteAPI
 final class PhoneMotionController: ControlTarget {
     let phone: OnDeviceController
     var executionName: String { "iPhone" }
+    var drivesAtSpeedLimits: Bool { true }
     private(set) var activity = "hold"
     private(set) var progress = 0.0
     private(set) var paused = false
@@ -195,32 +196,11 @@ final class PhoneMotionController: ControlTarget {
 
     /// A road leg from Apple Maps: its points, its length and how long Apple expects it to take.
     private func roadLeg(from a: StandaloneRoute.Point, to b: StandaloneRoute.Point, driving: Bool) async throws
-        -> (points: [StandaloneRoute.Point], meters: Double, expectedSeconds: Double?) {
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: .init(latitude: a.latitude, longitude: a.longitude)))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: .init(latitude: b.latitude, longitude: b.longitude)))
-        request.transportType = driving ? .automobile : .walking
-        let directions = MKDirections(request: request)
+        -> AppleMapsLeg {
+        let directions = AppleMapsLeg.directions(from: a, to: b, driving: driving)
         self.directions = directions
         defer { self.directions = nil }
-        // Older MapKit SDKs return a non-Sendable Response from the async overlay. Convert it
-        // inside the completion callback so only our Sendable points cross back to the actor.
-        return try await withCheckedThrowingContinuation { continuation in
-            directions.calculate { response, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let best = response?.routes.first, case let polyline = best.polyline, polyline.pointCount >= 2,
-                      polyline.pointCount <= 100_000 else {
-                    continuation.resume(throwing: StandaloneRoute.Problem.invalid)
-                    return
-                }
-                var coordinates = [CLLocationCoordinate2D](repeating: .init(), count: polyline.pointCount)
-                polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: polyline.pointCount))
-                // Explicit endpoints preserve the chosen stops and continuity between legs.
-                let seconds = best.expectedTravelTime
-                continuation.resume(returning: ([a] + coordinates.map { StandaloneRoute.Point($0.latitude, $0.longitude) } + [b],
-                                                best.distance, seconds > 0 ? seconds : nil))
-            }
-        }
+        return try await AppleMapsLeg.calculate(directions, from: a, to: b)
     }
 
     /// Play the route. With `natural` on (Drive like a real person) the car eases off and on, slows for

@@ -33,9 +33,9 @@ final class SessionRemoteControllerTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeController() -> SessionRemoteController {
+    private func makeController(roadData: OverpassLoader? = nil) -> SessionRemoteController {
         let pmd = Pymobiledevice3(executableURL: Self.fixtures.appendingPathComponent("fake-pymobiledevice3"))
-        let made = SessionRemoteController(pmd: pmd, options: .init(serverName: "Test Mac"))
+        let made = SessionRemoteController(pmd: pmd, options: .init(serverName: "Test Mac", roadData: roadData))
         controller = made
         return made
     }
@@ -158,6 +158,42 @@ final class SessionRemoteControllerTests: XCTestCase {
         XCTAssertLessThan(resumed, stillPaused + 0.2, "without jumping ahead by the time it was paused")
     }
 
+    /// A route on roads looks up their lights and limits first ("planning"), holding the start. When the
+    /// public map servers are busy (502, as they were on 2026-11-12) it sets off anyway, without them.
+    func testARouteOnRoadsPlansThenSetsOffEvenWhenTheMapServersAreBusy() async throws {
+        let asked = Counter()
+        let busy = OverpassLoader(userAgent: "test", cacheDirectory: nil, timeBudget: 3) { request in
+            asked.add()
+            try await Task.sleep(for: .milliseconds(300))
+            return (Data("busy".utf8), HTTPURLResponse(url: request.url!, statusCode: 502, httpVersion: nil, headerFields: nil)!)
+        }
+        let controller = makeController(roadData: busy)
+        let leg = RoadLeg(points: [(37.3349, -122.0090), (37.3370, -122.0090), (37.3370, -122.0050), (37.3349, -122.0050)],
+                          meters: 820, expectedSeconds: 60)
+        let request = RouteRequest(waypoints: [.init(latitude: 37.3349, longitude: -122.0090),
+                                               .init(latitude: 37.3349, longitude: -122.0050)],
+                                   followRoads: true, travelMode: "driving", speed: 10, realistic: true,
+                                   legs: [leg], followSpeedLimits: true)
+        let first = try await controller.driveRoute(request)
+        XCTAssertEqual(first.activity, "planning")
+        let driving = await waitUntil(timeout: 20) { await controller.status().activity == "route" }
+        XCTAssertTrue(driving, "it sets off once the servers have had their chance")
+        XCTAssertGreaterThan(asked.value, 0, "it did ask")
+    }
+
+    /// An older iPhone's route (no roads) sets off at once, as before.
+    func testARouteWithoutRoadsDoesNotWaitForMapData() async throws {
+        let controller = makeController(roadData: OverpassLoader(userAgent: "test", cacheDirectory: nil, timeBudget: 3) { _ in
+            XCTFail("a route without roads has nothing to look up")
+            throw URLError(.notConnectedToInternet)
+        })
+        let request = RouteRequest(waypoints: [.init(latitude: 37.3349, longitude: -122.0090),
+                                               .init(latitude: 37.3349, longitude: -122.0050)],
+                                   followRoads: true, travelMode: "driving", speed: 10, realistic: true)
+        let status = try await controller.driveRoute(request)
+        XCTAssertNotEqual(status.activity, "planning")
+    }
+
     func testPausingWithoutARouteIsRefused() async throws {
         let controller = makeController()
         try await startAtApplePark(controller)
@@ -168,4 +204,11 @@ final class SessionRemoteControllerTests: XCTestCase {
             XCTAssertEqual(error.status, 409)
         }
     }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func add() { lock.withLock { count += 1 } }
 }

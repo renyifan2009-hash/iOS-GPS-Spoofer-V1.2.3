@@ -192,6 +192,23 @@ final class TripPlannerTests: XCTestCase {
         XCTAssertEqual(plan.cruise(at: 400, settings: planner.settings), 10 * plan.driverFactor, accuracy: 1e-9)
     }
 
+    /// "Drive at the speed limit": the limit wins even above the chosen speed, which only counts where no
+    /// limit is known.
+    func testCruiseAtLimitsDrivesTheLimitEvenAboveTheChosenSpeed() {
+        let zones = RoadFeatures(zones: [SpeedZone(start: 200, end: 600, speed: 25)])
+        var settings = TripSettings(topSpeed: 10, profile: .drive)
+        let capped = TripPlanner(path: Self.line(1000), loopMode: .once, settings: settings, features: zones)
+        let cappedPlan = capped.lapPlan(lap: 0, seed: 2)
+        XCTAssertEqual(cappedPlan.cruise(at: 400, settings: settings), 10, accuracy: 1e-9, "off: the limit only slows")
+
+        settings.cruiseAtLimits = true
+        let atLimits = TripPlanner(path: Self.line(1000), loopMode: .once, settings: settings, features: zones)
+        let plan = atLimits.lapPlan(lap: 0, seed: 2)
+        XCTAssertEqual(plan.cruise(at: 400, settings: settings), 25 * plan.driverFactor, accuracy: 1e-9)
+        XCTAssertEqual(plan.cruise(at: 100, settings: settings), 10, accuracy: 1e-9, "no limit known: the chosen speed")
+        XCTAssertLessThan(atLimits.expectedLapTime(), capped.expectedLapTime() - 10)
+    }
+
     func testExpectedLapTimeAndPaceFit() {
         let planner = TripPlanner(path: Self.line(3000), loopMode: .once, settings: TripSettings(topSpeed: 10))
         // 3000 m at 10 m/s from rest to rest, a = 1.8, b = 2.7: about 300 + 10/3.6 + 10/5.4 s.

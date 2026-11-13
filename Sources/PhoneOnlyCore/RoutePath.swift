@@ -254,6 +254,27 @@ public enum RouteSimplifier {
         return result
     }
 
+    /// The legs of one route thinned together until they have at most `maxPoints` points in all: within a
+    /// metre of the original where that's enough, more on a long route. Each leg keeps its two ends; one
+    /// left with fewer than two real places becomes nil.
+    public static func simplify(legs: [[GeoPoint]?], maxPoints: Int) -> [[GeoPoint]?] {
+        func thinned(_ tolerance: Double) -> [[GeoPoint]?] {
+            legs.map { leg in
+                leg.map { simplify($0.filter(\.isValid), tolerance: tolerance) }.flatMap { $0.count >= 2 ? $0 : nil }
+            }
+        }
+        func total(_ legs: [[GeoPoint]?]) -> Int { legs.reduce(0) { $0 + ($1?.count ?? 0) } }
+        var tolerance = 1.0
+        var result = thinned(tolerance)
+        var attempts = 0
+        while total(result) > maxPoints && attempts < 40 {
+            tolerance *= 1.6
+            result = thinned(tolerance)
+            attempts += 1
+        }
+        return result
+    }
+
     private static func perpendicularDistance(
         _ p: (x: Double, y: Double), _ a: (x: Double, y: Double), _ b: (x: Double, y: Double)
     ) -> Double {
