@@ -85,7 +85,13 @@ final class TunnelFailureTests: XCTestCase {
         XCTAssertFalse(reset.isUnreachable)
         XCTAssertFalse(reset.isPairingProblem)
         XCTAssertTrue(reset.pointsAtAnotherPort)
-        XCTAssertTrue(reset.explanation.hasPrefix("This iPhone closed the connection"))
+        // Remote Pairing resets a key it doesn't know: the message leads with a new pairing file.
+        XCTAssertEqual(reset.explanation, TunnelFailure.remotePairingCutOffExplanation)
+        XCTAssertTrue(reset.explanation.contains("save a new pairing file"))
+        // Lockdown dropping the connection is still LocalDevVPN first.
+        let pipe = tunnel(.lockdown, code: 1, #"Socket(Os { code: 32, kind: BrokenPipe, message: "Broken pipe" })"#)
+        XCTAssertTrue(pipe.wasCutOff)
+        XCTAssertTrue(pipe.explanation.hasPrefix("This iPhone closed the connection while the tunnel was opening"))
     }
 
     func testOnlyRemotePairingTunnelFailuresPointAtAnotherPort() {

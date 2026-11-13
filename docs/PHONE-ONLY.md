@@ -51,6 +51,7 @@ Copy the small print: it identifies pairing, reachability, tunnel, developer-ima
 |---|---|
 | No developer port answers | Connect LocalDevVPN and allow Local Network access. |
 | Pairing identity rejected/missing | Export a new file for this iPhone from the current Mac app. |
+| Ports answer, then "Connection reset by peer" on Remote Pairing (port 49152) | The iPhone no longer knows the file's Remote Pairing key. This happens when the Mac paired with the iPhone again after the file was saved. Export a new file with the iPhone plugged in by cable. ([StikDebug#474](https://github.com/StikDebug/StikDebug/issues/474) saw the same reset, fixed by a new file.) |
 | Developer support cannot load | Import the matching extracted Apple DDI folder, enable Developer Mode and check internet for Apple's signing service. |
 | Location service fails to open | Check the detailed service/protocol error; a different OS build may need a library update. |
 | Stop is not confirmed | Check Maps; restart the phone if it still reports the simulated position. |

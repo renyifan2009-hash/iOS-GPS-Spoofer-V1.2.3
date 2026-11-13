@@ -151,6 +151,9 @@ public struct TunnelFailure: Error, Equatable, Sendable, LocalizedError {
             return "The iPhone didn't accept the pairing file. A pairing file belongs to one iPhone: if you have more than one, "
                 + "make sure it was saved with this one plugged in. Save a new one from your Mac and open it here."
         }
+        if wasCutOff, case .remotePairing = route {
+            return Self.remotePairingCutOffExplanation
+        }
         if wasCutOff {
             return "This iPhone closed the connection while the tunnel was opening. Turn LocalDevVPN off and on, "
                 + "then try again. If it keeps happening, save a new pairing file from your Mac."
@@ -163,6 +166,15 @@ public struct TunnelFailure: Error, Equatable, Sendable, LocalizedError {
     public func explanation(onCellularOnly: Bool) -> String {
         onCellularOnly && isUnreachable ? Self.cellularExplanation : explanation
     }
+
+    /// Remote Pairing answered and then cut the connection as the tunnel opened. That is how the iPhone
+    /// turns away a pairing key it doesn't know (StikDebug/StikDebug#474: the same reset at
+    /// 10.7.0.1:49152, gone with a newly made pairing file). The key goes stale when the Mac pairs with the
+    /// iPhone again after the file was saved, or the iPhone forgets its pairings.
+    public static let remotePairingCutOffExplanation = "This iPhone answered, then closed the connection: it "
+        + "most likely no longer knows the key in this pairing file. On your Mac, plug this iPhone in by cable "
+        + "and save a new pairing file (File ▸ Pairing File for the iPhone App…), then open it here. "
+        + "If a new file doesn't help, turn LocalDevVPN off and on and try again."
 
     /// Also the message when nothing answers before a connection is tried.
     public static let unreachableExplanation = "Can't reach this iPhone's developer services at 10.7.0.1. Open LocalDevVPN "
