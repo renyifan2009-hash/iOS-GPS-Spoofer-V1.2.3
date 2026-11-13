@@ -1126,6 +1126,8 @@ private struct PhonePill: View {
         case .stopping: return ("Stopping · This iPhone", Brand.warning, false)
         case .idle:
             if phone.loopbackReachable == false {
+                // Stop turned it off on purpose, and Start turns it on again: nothing to warn about.
+                if LocalDevVPN.turnedOffAtStop, !phone.onCellularOnly { return ("LocalDevVPN off · This iPhone", .gray, false) }
                 return (phone.onCellularOnly ? "Needs Wi‑Fi or Airplane Mode" : "Developer connection unavailable",
                         Brand.warning, false)
             }

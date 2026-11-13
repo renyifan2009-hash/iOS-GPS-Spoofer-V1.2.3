@@ -42,10 +42,19 @@ enum LocalDevVPN {
     /// alone nothing answers even with LocalDevVPN on, so this is the only sign that it is.
     private(set) static var turnedOnHere = false
 
+    /// Stop turned it off, and nothing has turned it on since: the status pill says so instead of
+    /// warning that the developer connection is missing.
+    private(set) static var turnedOffAtStop = false
+
     /// Turn LocalDevVPN on and come back. Without it installed, its App Store page opens instead.
     static func turnOn() {
         UIApplication.shared.open(enable) { opened in
-            if opened { turnedOnHere = true } else { UIApplication.shared.open(appStore) }
+            if opened {
+                turnedOnHere = true
+                turnedOffAtStop = false
+            } else {
+                UIApplication.shared.open(appStore)
+            }
         }
     }
 
@@ -73,6 +82,10 @@ enum LocalDevVPN {
     static func turnOffAfterStop() {
         guard turnsOffAtStop, isInstalled, UIApplication.shared.applicationState == .active else { return }
         turnedOnHere = false
+        turnedOffAtStop = true
+        // LocalDevVPN brings AnyWhere back a second later, and coming back to the screen turns it on when
+        // nothing answers. Not this time: count this as an automatic open, so the minute's wait applies.
+        lastAutomaticOpen = Date()
         UIApplication.shared.open(disable)
     }
 
