@@ -244,6 +244,83 @@ final class SignDirectionTests: XCTestCase {
         XCTAssertEqual(found.map(\.facing), [.both])
     }
 
+    /// A divided road running east: the eastbound half (way 1) and, 12 m north, the westbound half (way 2),
+    /// both one-way, crossed at 200 m by a two-way street (way 3). Like Stevens Creek Boulevard in Cupertino.
+    private func dividedRoad(_ lights: [OSMNode], extraWays: [OSMWay] = []) -> OverpassAnswer {
+        let west = a, j = a.moved(by: 200, bearing: 90), farEast = a.moved(by: 400, bearing: 90)
+        let north = { (p: GeoPoint) in p.moved(by: 12, bearing: 0) }
+        let eastbound = OSMWay(id: 1, points: [west, a.moved(by: 185, bearing: 90), j, farEast],
+                               tags: ["highway": "primary", "oneway": "yes"], nodeIDs: [101, 102, 103, 104])
+        let westbound = OSMWay(id: 2, points: [north(farEast), north(a.moved(by: 215, bearing: 90)), north(j), north(west)],
+                               tags: ["highway": "primary", "oneway": "yes"], nodeIDs: [201, 202, 203, 204])
+        let cross = OSMWay(id: 3, points: [j.moved(by: 100, bearing: 180), j.moved(by: 8, bearing: 180), j, north(j),
+                                           north(j).moved(by: 100, bearing: 0)],
+                           tags: ["highway": "secondary"], nodeIDs: [301, 302, 103, 203, 303])
+        return OverpassAnswer(nodes: lights, ways: [eastbound, westbound, cross] + extraWays)
+    }
+
+    private var eastbound: RoutePath { RoutePath([a, a.moved(by: 400, bearing: 90)]) }
+
+    func testOnADividedRoadOnlyThisSidesLightCounts() {
+        let lights = [
+            OSMNode(id: 102, point: a.moved(by: 185, bearing: 90), tags: ["highway": "traffic_signals"]),   // this side's
+            OSMNode(id: 202, point: a.moved(by: 215, bearing: 90).moved(by: 12, bearing: 0),
+                    tags: ["highway": "traffic_signals"]),   // the westbound half's, past the junction
+            OSMNode(id: 302, point: a.moved(by: 200, bearing: 90).moved(by: 8, bearing: 180),
+                    tags: ["highway": "traffic_signals"]),   // the cross street's
+        ]
+        let found = OverpassLoader.features(from: dividedRoad(lights), along: eastbound).features
+        let going = found.filter { $0.facing != .backward }
+        XCTAssertEqual(going.map { $0.distance.rounded() }, [185], "one stop at the junction, at this side's light")
+        XCTAssertEqual(going.first?.facing, .forward)
+    }
+
+    func testTheOtherHalfsCrossingLightBetweenJunctionsDoesNotCount() {
+        // A crossing light on the westbound half only, 100 m from the junction.
+        let westbound = OSMWay(id: 2, points: [a.moved(by: 400, bearing: 90).moved(by: 12, bearing: 0),
+                                               a.moved(by: 100, bearing: 90).moved(by: 12, bearing: 0),
+                                               a.moved(by: 12, bearing: 0)],
+                               tags: ["highway": "primary", "oneway": "yes"], nodeIDs: [201, 205, 204])
+        let eastboundHalf = OSMWay(id: 1, points: [a, a.moved(by: 400, bearing: 90)],
+                                   tags: ["highway": "primary", "oneway": "yes"], nodeIDs: [101, 104])
+        let light = OSMNode(id: 205, point: a.moved(by: 100, bearing: 90).moved(by: 12, bearing: 0),
+                            tags: ["highway": "traffic_signals"])
+        let answer = OverpassAnswer(nodes: [light], ways: [eastboundHalf, westbound])
+        let found = OverpassLoader.features(from: answer, along: eastbound).features
+        XCTAssertEqual(found.map(\.facing), [.backward], "only for the way back, which drives the other half")
+    }
+
+    func testAJunctionMappedOnlyOnTheOtherHalfStillHasALight() {
+        // Only the westbound half's crossing with the cross street is tagged: the junction has lights.
+        let light = OSMNode(id: 203, point: a.moved(by: 200, bearing: 90).moved(by: 12, bearing: 0),
+                            tags: ["highway": "traffic_signals"])
+        let found = OverpassLoader.features(from: dividedRoad([light]), along: eastbound).features
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found.first?.distance ?? 0, 200, accuracy: 1)
+    }
+
+    func testALightOnNoLoadedRoadNearThisSidesLightDoesNotAddAStop() {
+        let lights = [
+            OSMNode(id: 102, point: a.moved(by: 185, bearing: 90), tags: ["highway": "traffic_signals"]),
+            OSMNode(id: 999, point: a.moved(by: 225, bearing: 90).moved(by: 10, bearing: 0),
+                    tags: ["highway": "traffic_signals"]),
+        ]
+        let found = OverpassLoader.features(from: dividedRoad(lights), along: eastbound).features
+        XCTAssertEqual(found.filter { $0.facing != .backward }.map { $0.distance.rounded() }, [185])
+    }
+
+    func testOnATwoWayRoadEachDirectionStopsAtTheLightBeforeTheJunction() {
+        // Untagged lights on both approaches of the crossroads, 16 m apart, on the north–south road.
+        let lights = [
+            OSMNode(id: 102, point: a.moved(by: 192, bearing: 0), tags: ["highway": "traffic_signals"]),
+            OSMNode(id: 104, point: a.moved(by: 208, bearing: 0), tags: ["highway": "traffic_signals"]),
+        ]
+        let path = RoutePath([a, a.moved(by: 400, bearing: 0)])
+        let found = OverpassLoader.features(from: crossroads(lights), along: path).features
+        XCTAssertEqual(found.map { $0.distance.rounded() }, [192, 208])
+        XCTAssertEqual(found.map(\.facing), [.forward, .backward])
+    }
+
     func testWithoutTheRoadsEverySignNearbyCounts() {
         let path = RoutePath([a, a.moved(by: 400, bearing: 0)])
         let bare = OverpassAnswer(nodes: signs, ways: [])

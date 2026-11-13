@@ -48,6 +48,17 @@ struct ContentView: View {
     @State private var macMode: MacMode = .teleport
     /// How far out the map is, so following the simulated location keeps the zoom.
     @State private var mapDistance: CLLocationDistance = 3500
+    /// Where the search bar and buttons at the top, and the card at the bottom, sit on the screen. A tap
+    /// there is for them, never the map's, even when a button's glass lets it through.
+    @State private var controlFrames: [String: CGRect] = [:]
+    nonisolated private static let screenSpace = "screen"
+
+    /// Remembers where `content` sits on the screen, so the map leaves taps there to it.
+    private func overMap(_ key: String, _ content: some View) -> some View {
+        content.onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.screenSpace)) } action: {
+            controlFrames[key] = $0
+        }
+    }
 
     /// Either source holds a location right now.
     private var isSpoofing: Bool { connection.isSpoofing || phone.isSpoofing }
@@ -68,11 +79,12 @@ struct ContentView: View {
                     Spacer(minLength: 0)
                     // The card may take up to 60% of the screen (70% with very large text,
                     // where the map matters less). Past that it scrolls.
-                    bottomCard(maxHeight: screen.size.height * cardHeightFraction)
+                    overMap("card", bottomCard(maxHeight: screen.size.height * cardHeightFraction))
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
             }
+            .coordinateSpace(.named(Self.screenSpace))
         }
         .sheet(isPresented: $showSearch) {
             MapSearchView()
@@ -429,8 +441,10 @@ struct ContentView: View {
                 if (300...40_000).contains(distance) { mapDistance = distance }
                 joystick.setMapHeading(context.camera.heading)
             }
-            .onTapGesture { point in
-                guard let coordinate = proxy.convert(point, from: .local) else { return }
+            .onTapGesture(coordinateSpace: .named(Self.screenSpace)) { point in
+                // A tap on the controls over the map (the search bar's empty end, say) is theirs.
+                guard !controlFrames.values.contains(where: { $0.contains(point) }),
+                      let coordinate = proxy.convert(point, from: .named(Self.screenSpace)) else { return }
                 withAnimation(Brand.spring) {
                     if routeMode {
                         route.add(coordinate)
@@ -449,7 +463,7 @@ struct ContentView: View {
     /// happening; on the right, the button that shows where iOS thinks this iPhone is.
     private var topBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            overMap("search", HStack(spacing: 10) {
                 Button {
                     showSearch = true
                 } label: {
@@ -463,15 +477,17 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
                     .frame(minHeight: 48)
-                    .glassCapsule(interactive: true)
+                    // The whole capsule takes the tap. With the glass's own press effect on, a tap on its
+                    // empty end missed the button and went through to the map, which dropped a pin there.
                     .contentShape(Capsule())
+                    .glassCapsule()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Search for a place")
                 CircleButton(symbol: "gearshape", label: "Settings") { showSettings = true }
-            }
+            })
             HStack(alignment: .top, spacing: 10) {
-                Button {
+                overMap("pill", Button {
                     if source == .thisPhone { showPhoneSetup = true } else { showPairing = true }
                 } label: {
                     if source == .thisPhone {
@@ -480,14 +496,14 @@ struct ContentView: View {
                         StatusPill(connection: connection)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain))
                 Spacer(minLength: 8)
-                CircleButton(symbol: locations.showsReportedLocation ? "location.fill" : "location",
-                             label: "Show where iOS says this iPhone is",
-                             isOn: locations.showsReportedLocation,
-                             tint: locations.showsReportedLocation ? Brand.sky : nil) {
+                overMap("location", CircleButton(symbol: locations.showsReportedLocation ? "location.fill" : "location",
+                                                 label: "Show where iOS says this iPhone is",
+                                                 isOn: locations.showsReportedLocation,
+                                                 tint: locations.showsReportedLocation ? Brand.sky : nil) {
                     withAnimation(Brand.snappy) { locations.toggleReportedLocation() }
-                }
+                })
             }
         }
         .padding(.top, 6)
@@ -1276,6 +1292,8 @@ private struct CircleButton: View {
                 .font(.system(size: 17, weight: .semibold))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 48, height: 48)
+                // The whole circle takes the tap, not just the symbol (see the search bar).
+                .contentShape(Circle())
                 .glassCircle(tint: tint)
         }
         .buttonStyle(.plain)
