@@ -69,6 +69,9 @@ public struct OverpassLoader: Sendable {
     /// Search radii in metres around the route. Lights cover a whole junction;
     /// signs must be on the route's own road, not a side street.
     static let signalRadius = 18.0, signRadius = 6.0, crossingRadius = 12.0, roadRadius = 6.0
+    /// How far along the route a junction's lights reach: a cross street's light, or the other half of a
+    /// divided road's, within this of the route's own light belongs to the same junction.
+    static let junctionReach = 50.0
 
     /// Everything known along `path`. `roads` also loads the roads themselves
     /// (for driving): their speed limits, and which signs are for which direction.
@@ -176,7 +179,7 @@ public struct OverpassLoader: Sendable {
     public static func features(from answer: OverpassAnswer, along path: RoutePath) -> RoadFeatures {
         let matcher = RouteMatcher(path: path)
         let signs = RoadSigns(ways: answer.ways, signs: Set(answer.nodes.map(\.id)))
-        var features: [RoadFeature] = []
+        var found: [(feature: RoadFeature, forward: RoadSigns.Fit, backward: RoadSigns.Fit)] = []
         for node in answer.nodes.sorted(by: { $0.id < $1.id }) {
             guard let (kind, radius, speed) = classify(node) else { continue }
             var passes = matcher.passes(near: node.point, radius: radius)
@@ -187,11 +190,34 @@ public struct OverpassLoader: Sendable {
                 passes.removeFirst()
             }
             for pass in passes {
-                // Only signs for the route's direction (out and back: either).
-                guard let facing = signs.facing(of: node, kind: kind, along: path, at: pass.distance) else { continue }
-                features.append(RoadFeature(kind: kind, distance: pass.distance, point: node.point,
-                                            facing: facing, speed: speed))
+                let fit = signs.fit(of: node, kind: kind, along: path, at: pass.distance)
+                guard fit.forward != .none || fit.backward != .none else { continue }
+                found.append((RoadFeature(kind: kind, distance: pass.distance, point: node.point, speed: speed),
+                              fit.forward, fit.backward))
             }
+        }
+        // Only signs and lights for the route's direction (out and back: either). A light that only
+        // marks the junction counts where the route's own road has no light nearby going that way.
+        func ownLight(near distance: Double, forward: Bool) -> Bool {
+            found.contains { other in
+                other.feature.kind == .trafficSignal && (forward ? other.forward : other.backward) == .own
+                    && abs(other.feature.distance - distance) <= junctionReach
+            }
+        }
+        var features: [RoadFeature] = []
+        for item in found {
+            func counts(_ fit: RoadSigns.Fit, forward: Bool) -> Bool {
+                switch fit {
+                case .own: return true
+                case .standIn: return !ownLight(near: item.feature.distance, forward: forward)
+                case .none: return false
+                }
+            }
+            let forward = counts(item.forward, forward: true), backward = counts(item.backward, forward: false)
+            guard forward || backward else { continue }
+            var feature = item.feature
+            feature.facing = forward && backward ? .both : (forward ? .forward : .backward)
+            features.append(feature)
         }
         var kept = firstOfEachJunction(features)
         // A crossing light at a junction with traffic lights is part of that

@@ -4,9 +4,24 @@ import Foundation
 /// worked out from the roads they're mapped on. OpenStreetMap puts a stop or
 /// yield sign on its road just before the junction it's for, and tags lights and
 /// signs that face one way with `traffic_signals:direction` or `direction`.
-/// Without the roads (they're loaded for driving), everything near the route counts.
+/// A divided road is two one-way roads side by side: a light on the other half is
+/// for the traffic going the other way. Without the roads (they're loaded for
+/// driving), everything near the route counts.
 struct RoadSigns {
     enum Travel { case forward, backward }
+
+    /// How a light or sign met on the route bears on one way of travelling it.
+    enum Fit: Equatable {
+        /// On the road the route is on, for traffic going this way.
+        case own
+        /// A light that isn't on the route's road this way but marks a junction with lights: on a cross
+        /// street, on the other half of a divided road where a road crosses, or on a road that wasn't
+        /// loaded. It counts only where the route's own road has no light of its own nearby, so the car
+        /// doesn't stop twice at one junction.
+        case standIn
+        /// Not for traffic going this way.
+        case none
+    }
 
     private let ways: [OSMWay]
     /// Node id → each road it's on, and where along it.
@@ -29,37 +44,57 @@ struct RoadSigns {
         junctions = Set(degree.filter { $0.value >= 3 }.keys)
     }
 
-    /// Which ways along the route `node`, met `distance` metres along `path`,
-    /// is for: going along the route, coming back the other way, or both. Nil
-    /// when it's for neither: a side street's sign, say.
-    func facing(of node: OSMNode, kind: RoadFeature.Kind, along path: RoutePath,
-                at distance: Double) -> RoadFeature.Facing? {
-        guard kind != .signalCrossing, let places = placements[node.id], !places.isEmpty else { return .both }
-        let forward = applies(node, kind: kind, places: places,
-                              heading: Self.heading(along: path, at: distance, back: false))
-        let backward = applies(node, kind: kind, places: places,
-                               heading: Self.heading(along: path, at: distance, back: true))
-        switch (forward, backward) {
-        case (true, true): return .both
-        case (true, false): return .forward
-        case (false, true): return .backward
-        case (false, false): return nil
+    /// How `node`, met `distance` metres along `path`, bears on going along the route and on coming back
+    /// the other way.
+    func fit(of node: OSMNode, kind: RoadFeature.Kind, along path: RoutePath,
+             at distance: Double) -> (forward: Fit, backward: Fit) {
+        guard kind != .signalCrossing else { return (.own, .own) }
+        guard let places = placements[node.id], !places.isEmpty else {
+            // On no road that was loaded. A light may still mark the junction; a sign is taken as the route's.
+            let fit: Fit = kind == .trafficSignal ? .standIn : .own
+            return (fit, fit)
         }
+        return (fit(node, kind: kind, places: places, heading: Self.heading(along: path, at: distance, back: false)),
+                fit(node, kind: kind, places: places, heading: Self.heading(along: path, at: distance, back: true)))
     }
 
-    private func applies(_ node: OSMNode, kind: RoadFeature.Kind, places: [(way: Int, index: Int)],
-                         heading: Double) -> Bool {
-        var onRoute = false
+    private func fit(_ node: OSMNode, kind: RoadFeature.Kind, places: [(way: Int, index: Int)],
+                     heading: Double) -> Fit {
+        var onRoute = false, onOtherHalf = false, onCrossStreet = false
         for place in places {
             let way = ways[place.way]
-            guard let travel = Self.travel(on: way, at: place.index, heading: heading) else { continue }
+            guard let travel = Self.travel(on: way, at: place.index, heading: heading) else {
+                onCrossStreet = true
+                continue
+            }
+            // A one-way road the route would run against is the other half of a divided road.
+            if let allowed = Self.oneWay(way), allowed != travel {
+                onOtherHalf = true
+                continue
+            }
             onRoute = true
             if let faces = facing(of: node, kind: kind, on: way, at: place.index), faces != travel { continue }
-            return true
+            return .own
         }
-        // Only on roads the route crosses: a side street's sign. A light there
-        // belongs to the same junction as the route's own.
-        return !onRoute && kind == .trafficSignal
+        // On the route's road but for the other way, or a sign on some other road.
+        guard !onRoute, kind == .trafficSignal else { return .none }
+        // The other half's light between junctions is its own crossing light, nothing to do with this side.
+        if onOtherHalf, !onCrossStreet, !junctions.contains(node.id) { return .none }
+        return .standIn
+    }
+
+    /// Which way along `way` traffic may go, when it may only go one way.
+    static func oneWay(_ way: OSMWay) -> Travel? {
+        switch way.tags["oneway"]?.lowercased() {
+        case "yes", "true", "1": return .forward
+        case "-1", "reverse": return .backward
+        case .some: return nil
+        case nil: break
+        }
+        if ["roundabout", "circular"].contains(way.tags["junction"] ?? "") || way.tags["highway"] == "motorway" {
+            return .forward
+        }
+        return nil
     }
 
     /// Which way along `way` the sign or light at `index` faces traffic; nil for both ways.
@@ -70,9 +105,10 @@ struct RoadSigns {
         case "backward": return .backward
         default: break
         }
-        // An untagged stop or yield sign is for traffic heading into the junction
-        // just past it. One on the junction itself (an all-way stop) is for everyone.
-        guard kind == .stopSign || kind == .giveWay, node.tags["stop"] != "all",
+        // An untagged stop or yield sign, or light, is for traffic heading into the junction
+        // just past it. One on the junction itself (an all-way stop, a light mapped on the
+        // crossing) is for everyone.
+        guard kind == .stopSign || kind == .giveWay || kind == .trafficSignal, node.tags["stop"] != "all",
               !junctions.contains(node.id) else { return nil }
         switch (junctionDistance(on: way, from: index, step: 1), junctionDistance(on: way, from: index, step: -1)) {
         case let (ahead?, behind?): return abs(ahead - behind) < 5 ? nil : (ahead < behind ? .forward : .backward)
