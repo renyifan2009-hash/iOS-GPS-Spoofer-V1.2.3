@@ -54,6 +54,11 @@ final class OnDeviceController {
     /// Told once each time a held location loses its connection, so the app can open LocalDevVPN (in the
     /// foreground) or post a notification (in the background).
     @ObservationIgnored var onConnectionLost: (@MainActor () -> Void)?
+    /// Asked when Start finds nothing answering: open LocalDevVPN, which turns on and comes straight back.
+    /// Says whether it was opened; if so, Start gives it a few seconds to come up.
+    @ObservationIgnored var turnOnVPN: (@MainActor () -> Bool)?
+    /// Told when Stop has put the real location back (or tried to), so the app can turn LocalDevVPN off.
+    @ObservationIgnored var onStopped: (@MainActor () -> Void)?
 
     /// Whether LocalDevVPN routes this iPhone's own address back to it. Nil
     /// until checked.
@@ -350,11 +355,18 @@ final class OnDeviceController {
             // Without LocalDevVPN the connection would wait a long time
             // before failing, so check first; it takes a moment.
             await checkLoopback()
-            // A cellular/Wi-Fi transition can temporarily remove the VPN route.
             if ports?.anyAnswered != true {
-                do { try await Task.sleep(for: recoveryDelay) } catch { return giveUp(nil) }
-                guard stops == stopsBefore else { return false }
-                await checkLoopback()
+                // LocalDevVPN is off (Stop turns it off), or a cellular/Wi-Fi transition took its route
+                // away for a moment. Turn it on if the app may: it comes straight back, and gets a few
+                // seconds to connect. On cellular data alone nothing answers anyway, so one more look.
+                let opened = turnOnVPN?() ?? false
+                let looks = opened && !onCellularOnly ? Self.looksWhileLocalDevVPNStarts : 1
+                for _ in 0..<looks {
+                    do { try await Task.sleep(for: recoveryDelay) } catch { return giveUp(nil) }
+                    guard stops == stopsBefore else { return false }
+                    await checkLoopback()
+                    if ports?.anyAnswered == true { break }
+                }
             }
             guard stops == stopsBefore else { return false }
             switch TunnelPlan.readiness(for: pairing.record, ports: ports ?? DeveloperPorts(),
@@ -496,8 +508,12 @@ final class OnDeviceController {
         if !cleared {
             show("The connection didn't confirm Stop. If Maps still shows the simulated location, restart this iPhone.")
         }
+        onStopped?()
         return cleared
     }
+
+    /// How many times Start looks again, `recoveryDelay` apart, after opening LocalDevVPN for it.
+    static let looksWhileLocalDevVPNStarts = 4
 
     /// Re-applies the held location every `heartbeatInterval`, which also notices a dropped connection.
     /// While reconnecting it beats faster, and only tries once the developer port answers again.

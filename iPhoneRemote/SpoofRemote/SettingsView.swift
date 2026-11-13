@@ -12,6 +12,7 @@ struct SettingsView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("locationSource") private var source: LocationSource = .mac
     @AppStorage(LocalDevVPN.autoOpenKey) private var autoOpenVPN = true
+    @AppStorage(LocalDevVPN.turnOffAtStopKey) private var turnOffVPNAtStop = true
     @AppStorage(KeepAwakeSettings.silentAudioKey) private var silentAudio = true
     @AppStorage(NaturalSettings.holdWobbleKey) private var holdWobble = true
     @AppStorage(UnitsChoice.key) private var unitsChoice: UnitsChoice = .automatic
@@ -41,16 +42,25 @@ struct SettingsView: View {
                 }
 
                 if source == .thisPhone {
-                    Section("This iPhone") {
+                    Section {
                         Button { showPhoneSetup = true } label: {
                             row("checklist", "Set Up", value: phone.isSetUp ? "Ready" : "Needs pairing file")
                         }
                         Toggle(isOn: $autoOpenVPN) {
-                            Label("Open LocalDevVPN automatically", systemImage: "network.badge.shield.half.filled")
+                            Label("Turn on LocalDevVPN automatically", systemImage: "network.badge.shield.half.filled")
+                        }
+                        Toggle(isOn: $turnOffVPNAtStop) {
+                            Label("Turn off LocalDevVPN at Stop", systemImage: "network.slash")
                         }
                         Button { LocalDevVPN.turnOn() } label: {
                             row("power", "Turn On LocalDevVPN Now")
                         }
+                    } header: {
+                        Text("This iPhone")
+                    } footer: {
+                        Text("AnyWhere turns LocalDevVPN on when it opens and when you tap Start, and off when you "
+                            + "stop. It can't when you close AnyWhere: iOS doesn't let an app open another one from "
+                            + "the background, and a location you're holding needs LocalDevVPN while you use other apps.")
                     }
                     Section {
                         Toggle(isOn: $silentAudio) {
