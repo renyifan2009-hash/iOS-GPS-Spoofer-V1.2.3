@@ -68,6 +68,8 @@ final class OnDeviceController {
     /// to the developer services away then (see `PhoneNetwork`), so the screens say so instead of
     /// sending the person to LocalDevVPN. Kept up to date by `watchNetwork()`.
     private(set) var onCellularOnly = false
+    /// On a joined Wi‑Fi network (or a wired one), where LocalDevVPN works without Airplane Mode.
+    private(set) var onWiFi = false
 
     /// LocalDevVPN is on, but this iPhone only answers Remote Pairing and the
     /// pairing file was saved without that identity. A new file fixes it.
@@ -305,9 +307,13 @@ final class OnDeviceController {
         #endif
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
-            let cellularOnly = path.status == .satisfied
-                && PhoneNetwork.isCellularOnly(path.availableInterfaces.map(\.type))
-            Task { @MainActor in self?.networkChanged(cellularOnly: cellularOnly) }
+            let types = path.availableInterfaces.map(\.type)
+            let cellularOnly = path.status == .satisfied && PhoneNetwork.isCellularOnly(types)
+            let wifi = path.status == .satisfied && (types.contains(.wifi) || types.contains(.wiredEthernet))
+            Task { @MainActor in
+                self?.networkChanged(cellularOnly: cellularOnly)
+                self?.onWiFi = wifi
+            }
         }
         monitor.start(queue: DispatchQueue(label: "com.iosgpsspoof.remote.network"))
         networkMonitor = monitor
@@ -564,8 +570,8 @@ final class OnDeviceController {
     /// On cellular data alone it can't come back until there's Wi‑Fi or Airplane Mode: say so.
     private var reconnectingMessage: String {
         guard onCellularOnly else { return "Connection lost. Reconnecting…" }
-        return "Connection lost. iOS doesn't let LocalDevVPN reach the developer services over cellular data. "
-            + "Join Wi‑Fi, or turn on Airplane Mode with LocalDevVPN still connected, and AnyWhere reconnects."
+        return "Connection lost. On cellular data only, iOS blocks LocalDevVPN. Turn on Airplane Mode (LocalDevVPN "
+            + "stays connected) or join Wi‑Fi, and AnyWhere reconnects. Then you can turn Airplane Mode off again."
     }
 
     /// Reconnecting went on for the whole window: end the session and say so.
