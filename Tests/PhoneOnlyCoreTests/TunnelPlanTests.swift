@@ -73,4 +73,18 @@ final class TunnelPlanTests: XCTestCase {
         XCTAssertEqual(TunnelPlan.routes(for: try Sample.record(Sample.remotePairing())),
                        [.remotePairing(port: 49152)])
     }
+
+    func testLockdownOnlyBetweenIOS17Point4And26Point3() {
+        func v(_ major: Int, _ minor: Int) -> OperatingSystemVersion {
+            OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: 0)
+        }
+        XCTAssertFalse(TunnelPlan.allowsLockdown(onIOS: v(17, 3)))
+        XCTAssertTrue(TunnelPlan.allowsLockdown(onIOS: v(17, 4)))
+        XCTAssertTrue(TunnelPlan.allowsLockdown(onIOS: v(18, 6)))
+        XCTAssertTrue(TunnelPlan.allowsLockdown(onIOS: v(26, 3)))
+        // iOS 26.4 closes lockdown through LocalDevVPN at once.
+        XCTAssertFalse(TunnelPlan.allowsLockdown(onIOS: v(26, 4)))
+        XCTAssertFalse(TunnelPlan.allowsLockdown(onIOS: v(26, 6)))
+        XCTAssertFalse(TunnelPlan.allowsLockdown(onIOS: v(27, 2)))
+    }
 }
