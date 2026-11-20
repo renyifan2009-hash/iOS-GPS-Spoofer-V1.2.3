@@ -173,7 +173,8 @@ public struct TunnelFailure: Error, Equatable, Sendable, LocalizedError {
     /// iPhone again after the file was saved, or the iPhone forgets its pairings.
     public static let remotePairingCutOffExplanation = "This iPhone answered, then closed the connection: it "
         + "most likely no longer knows the key in this pairing file. On your Mac, plug this iPhone in by cable "
-        + "and save a new pairing file (File ▸ Pairing File for the iPhone App…), then open it here. "
+        + "and save a new pairing file (File ▸ Pairing File for the iPhone App…), then open it here. On iOS 27 "
+        + "or later you can make one on this iPhone instead: This iPhone ▸ Set Up ▸ Pair Here. "
         + "If a new file doesn't help, turn LocalDevVPN off and on and try again."
 
     /// Also the message when nothing answers before a connection is tried.

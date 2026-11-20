@@ -13,6 +13,7 @@ struct PhoneOnlySetupView: View {
     @State private var confirmRemove = false
     @State private var importingImage = false
     @State private var imagePickerError: String?
+    @State private var pairingHere = false
 
     /// LocalDevVPN on the App Store (the link its GitHub README gives).
     static let localDevVPN = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
@@ -79,6 +80,7 @@ struct PhoneOnlySetupView: View {
                 case .failure(let error): phone.reportImportFailure(error)
                 }
             }
+            .sheet(isPresented: $pairingHere) { PhonePairingView() }
             .confirmationDialog("Remove the pairing file?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Remove", role: .destructive) { phone.removePairingFile() }
             } message: {
@@ -147,7 +149,9 @@ struct PhoneOnlySetupView: View {
             Text("Use this iPhone on its own")
                 .font(Brand.rounded(.title2))
                 .multilineTextAlignment(.center)
-            Text("Set it up once with your Mac. After that, change the location right here, on Wi-Fi or cellular.")
+            Text(PhonePairing.isAvailable
+                 ? "Set it up once, here or with your Mac. After that, change the location right here, on Wi-Fi or in Airplane Mode."
+                 : "Set it up once with your Mac. After that, change the location right here, on Wi-Fi or in Airplane Mode.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -185,11 +189,13 @@ struct PhoneOnlySetupView: View {
     }
 
     private func pairingDetail(tooOld: Bool) -> String {
+        let here = PhonePairing.isAvailable
+            ? " Or tap Pair Here to make one on this iPhone, with no computer." : ""
         if !phone.isSetUp {
-            return "On your Mac, plug this iPhone in and open AnyWhere. Choose File ▸ Pairing File for the iPhone App…, click Create Pairing File, then Send with AirDrop. Here, tap Accept and pick AnyWhere. If you saved it to Files instead, tap Choose File below and pick it from Downloads."
+            return "On your Mac, plug this iPhone in and open AnyWhere. Choose File ▸ Pairing File for the iPhone App…, click Create Pairing File, then Send with AirDrop. Here, tap Accept and pick AnyWhere. If you saved it to Files instead, tap Choose File below and pick it from Downloads." + here
         }
         if tooOld {
-            return "This pairing file can't be used on this iPhone's iOS. On your Mac, plug this iPhone in by cable, unlock it, and choose File ▸ Pairing File for the iPhone App… again. Then AirDrop it here. If it still fails, update AnyWhere on the Mac first."
+            return "This pairing file can't be used on this iPhone's iOS. On your Mac, plug this iPhone in by cable, unlock it, and choose File ▸ Pairing File for the iPhone App… again. Then AirDrop it here. If it still fails, update AnyWhere on the Mac first." + here
         }
         let held = "It's in this iPhone's Keychain. It lets this app talk to the iPhone like your Mac does."
         // Which file it is, so a file left from before a reinstall isn't a mystery.
@@ -199,6 +205,16 @@ struct PhoneOnlySetupView: View {
 
     @ViewBuilder
     private func pairingButtons(tooOld: Bool) -> some View {
+        if PhonePairing.isAvailable {
+            // iOS 27: a new pairing file right here, no computer or cable.
+            Button {
+                pairingHere = true
+            } label: {
+                Label(phone.isSetUp && !tooOld ? "Pair Again Here" : "Pair Here", systemImage: "link")
+                    .fixedSize()
+            }
+            .glassButton()
+        }
         if !phone.isSetUp || tooOld {
             Button {
                 phone.clearImportError()
