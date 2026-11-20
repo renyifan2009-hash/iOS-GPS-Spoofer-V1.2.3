@@ -66,7 +66,7 @@ private final class FakeVPN: @unchecked Sendable {
             looks += 1
             guard on else { return DeveloperPorts() }
             looksSinceOn += 1
-            return looksSinceOn >= answersAfter ? DeveloperPorts(lockdown: true) : DeveloperPorts()
+            return looksSinceOn >= answersAfter ? DeveloperPorts(remotePairing: [49152], lockdown: true) : DeveloperPorts()
         }
     }
 }
@@ -86,6 +86,11 @@ final class StandaloneControlTests: XCTestCase {
             dictionary[key] = Data("fake-test-key".utf8)
         }
         for key in ["HostID", "SystemBUID", "WiFiMACAddress"] { dictionary[key] = "test" }
+        // A Remote Pairing identity too: from iOS 26.4 it is the only way in (no lockdown through
+        // LocalDevVPN), and the Simulator these tests run in has a newer iOS than that.
+        dictionary["public_key"] = Data(repeating: 1, count: 32)
+        dictionary["private_key"] = Data(repeating: 2, count: 32)
+        dictionary["identifier"] = "test-host"
         return try PairingFile(data: PropertyListSerialization.data(fromPropertyList: dictionary, format: .xml, options: 0))
     }
 
@@ -102,14 +107,14 @@ final class StandaloneControlTests: XCTestCase {
 
     private func phone(_ engine: FakeDevice, probe: (@Sendable () async -> DeveloperPorts)? = nil) throws -> OnDeviceController {
         OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                           developerPortProbe: probe ?? { DeveloperPorts(lockdown: true) })
+                           developerPortProbe: probe ?? { DeveloperPorts(remotePairing: [49152], lockdown: true) })
     }
 
     func testTransientTransportFailureRecovers() async throws {
         let engine = FakeDevice()
         engine.transportFailures = 1
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        recoveryDelay: .milliseconds(10))
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
         XCTAssertTrue(started)
@@ -122,7 +127,7 @@ final class StandaloneControlTests: XCTestCase {
         let engine = FakeDevice()
         engine.transportFailures = 10
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        recoveryDelay: .milliseconds(10))
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Test")
         XCTAssertFalse(started)
@@ -134,7 +139,7 @@ final class StandaloneControlTests: XCTestCase {
         let engine = FakeDevice()
         engine.transportFailures = 1
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        recoveryDelay: .milliseconds(200))
         let start = Task { await phone.set(.init(latitude: 0, longitude: 0), name: "Test") }
         while phone.lastError == nil { await Task.yield() }
@@ -261,7 +266,7 @@ final class StandaloneControlTests: XCTestCase {
     func testHeldLocationReconnectsInsteadOfQuittingWhenTheLinkDrops() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
         var lost = 0
         phone.onConnectionLost = { lost += 1 }
@@ -301,7 +306,7 @@ final class StandaloneControlTests: XCTestCase {
     func testReconnectingOnCellularDataSaysWhatBringsItBack() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         XCTAssertTrue(started)
@@ -391,7 +396,7 @@ final class StandaloneControlTests: XCTestCase {
     func testReconnectingGivesUpAfterItsWindow() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10),
                                        reconnectWindow: .milliseconds(120))
         let started = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
@@ -407,7 +412,7 @@ final class StandaloneControlTests: XCTestCase {
     func testStopWhileReconnectingEndsIt() async throws {
         let engine = FakeDevice()
         let phone = OnDeviceController(engine: engine, pairing: try pairing(), keepAlive: FakeBackground(),
-                                       developerPortProbe: { DeveloperPorts(lockdown: true) },
+                                       developerPortProbe: { DeveloperPorts(remotePairing: [49152], lockdown: true) },
                                        heartbeatInterval: .milliseconds(30), recoveryDelay: .milliseconds(10))
         _ = await phone.set(.init(latitude: 0, longitude: 0), name: "Hold")
         engine.failSet = true
