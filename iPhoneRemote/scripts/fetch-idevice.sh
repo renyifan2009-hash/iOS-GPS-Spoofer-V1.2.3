@@ -6,14 +6,23 @@
 #
 #   iPhoneRemote/scripts/fetch-idevice.sh
 #
-# IDEVICE_ZIP=/path/to/idevice-xcframework-v0.1.68.zip uses a copy you already
+# IDEVICE_ZIP=/path/to/idevice-xcframework-2dca9a58.zip uses a copy you already
 # downloaded. IDEVICE_CACHE_DIR=<folder> keeps the download there for next
 # time (CI caches that folder). Either way it's checked against the SHA-256.
 set -euo pipefail
 
-VERSION="0.1.68"
-SHA256="c9eccdd1942de756d746a2569d93302774ab0eff1cff314ec8118f768b3d8dc7"
-URL="https://github.com/jkcoxson/idevice/releases/download/v${VERSION}/idevice-xcframework-v${VERSION}.zip"
+# idevice's master branch at 2dca9a58 (2026-11-16), built by its own CI (run 43892168504, the
+# "idevice-xcframework" artifact), because no release has these fixes yet:
+# - every RSD handshake presents the same host UUID (df53825a, e5645743). Since iOS 27.2 the
+#   iPhone closes every developer service it advertised when a connection presents a new one,
+#   which a reconnect (after loading developer support, or after the link drops) always did.
+# - the TCP stack inside the tunnel: jktcp 0.1.8 and an MSS of 8192 (9c1ad299, edf25870), for
+#   tunnels on iOS 27 that hung or dropped.
+# Nothing the app calls changed signature; see docs/PHONE-ONLY.md. The zip is kept as a
+# pre-release asset of this repository, since CI artifacts expire and need a GitHub login.
+VERSION="0.1.68-2dca9a58"
+SHA256="8473a34cbccd06b4955c5dd9808f01086deeeac0dfe8533060729ecdc62c6611"
+URL="https://github.com/renyifan2009-hash/iOS-GPS-Spoofer-V1.2.3/releases/download/idevice-2dca9a58/idevice-xcframework-2dca9a58.zip"
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$HERE/Vendor"
