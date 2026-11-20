@@ -80,8 +80,7 @@ final class OnDeviceController {
     /// Eligibility is not a claim that every device/OS build has passed a hardware test.
     static let isSupported = ProcessInfo.processInfo.isOperatingSystemAtLeast(
         OperatingSystemVersion(majorVersion: 17, minorVersion: 0, patchVersion: 0))
-    private static let allowLockdown = ProcessInfo.processInfo.isOperatingSystemAtLeast(
-        OperatingSystemVersion(majorVersion: 17, minorVersion: 4, patchVersion: 0))
+    private static let allowLockdown = TunnelPlan.allowsLockdown(onIOS: ProcessInfo.processInfo.operatingSystemVersion)
     private(set) var developerImageBuild: String? = UserDefaults.standard.string(forKey: "developerImageBuild")
     private(set) var importingDeveloperImage = false
     private(set) var developerImageError: String?

@@ -66,8 +66,17 @@ public enum TunnelPlan {
         case remotePairingDoesNotAnswer
     }
 
+    /// Whether lockdown (CoreDeviceProxy) is worth trying through LocalDevVPN on this iOS version.
+    /// It needs iOS 17.4. From iOS 26.4 the iPhone closes lockdown connections through the loopback
+    /// at once ("Broken pipe"), so Remote Pairing is the only way (SideStore/SideStore#1656, #1720).
+    /// Trying it anyway only put a misleading lockdown error next to the real one.
+    public static func allowsLockdown(onIOS version: OperatingSystemVersion) -> Bool {
+        let v = (version.majorVersion, version.minorVersion)
+        return v >= (17, 4) && v < (26, 4)
+    }
+
     /// Remote Pairing first. Lockdown/CoreDeviceProxy is a second chance on
-    /// iOS 17.4+ when reachable. Route selection alone does not prove OS compatibility.
+    /// iOS 17.4 to 26.3 when reachable. Route selection alone does not prove OS compatibility.
     public static func readiness(for record: PairingRecord, ports: DeveloperPorts, allowLockdown: Bool = true) -> Readiness {
         guard ports.anyAnswered else { return .nothingAnswers }
         var routes: [TunnelRoute] = []

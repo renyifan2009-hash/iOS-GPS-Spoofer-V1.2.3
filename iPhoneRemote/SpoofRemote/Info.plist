@@ -11,6 +11,7 @@
 	<array>
 		<string>_iosgpsspoof._tcp</string>
 		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>

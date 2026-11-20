@@ -35,6 +35,10 @@ The simulated location lasts only while AnyWhere's developer connection is open,
 - silent audio mixed with other sound (Settings ▸ Stay on when locked), health-checked every 2 seconds;
 - a notification if the connection drops while the screen is off.
 
+**Pairing without a computer (iOS 27 and later).** This iPhone ▸ Set Up ▸ Pair Here makes a pairing file on the iPhone itself. AnyWhere makes a fresh Remote Pairing identity (idevice's `pairable_host_prepare`), advertises `_remotepairing-pairable-host._tcp` with Bonjour and listens on a free port. In Settings ▸ Privacy & Security ▸ Developer Mode, **Pair with AnyWhere** connects to it, and the code AnyWhere shows (also as a notification) finishes pair-setup (`pairable_host_accept_fd`). This also replaces a pairing file the iPhone no longer accepts ("Connection reset by peer" on port 49152).
+
+**Lockdown** is only tried on iOS 17.4 to 26.3. From iOS 26.4 the iPhone closes lockdown connections through LocalDevVPN at once ("Broken pipe"), so Remote Pairing is the only way in.
+
 LocalDevVPN opens by itself when AnyWhere opens and the developer port doesn't answer, and when Start finds it off (`localdevvpn://enable?scheme=anywhere`; it comes straight back, and Start waits a few seconds for it to connect). Stop turns it off again (`localdevvpn://disable?scheme=anywhere`). Each can be turned off in Settings. AnyWhere can't turn it off when it's closed: iOS doesn't let an app open another app from the background, and a held location needs LocalDevVPN while other apps are in use.
 
 ## The 7-day signing
@@ -61,6 +65,6 @@ Copy the small print: it identifies pairing, reachability, tunnel, developer-ima
 
 [PHONE-STANDALONE-TESTING.md](PHONE-STANDALONE-TESTING.md) gives the full computer-off, reboot, cellular, background, stop-race and version-matrix checklist. Unit/simulator tests use fake device operations and do not prove RSD/DVT works on real hardware.
 
-The source is in `Sources/PhoneOnlyCore` (protocol rules, image validation, route timeline), `iPhoneRemote/SpoofRemote/OnDevice` (tunnel, mounting, controller, local motion), and `iPhoneRemote/Tests` (hosted control tests). The library is [idevice 0.1.68](https://github.com/jkcoxson/idevice/tree/v0.1.68), pinned by checksum in `fetch-idevice.sh`.
+The source is in `Sources/PhoneOnlyCore` (protocol rules, image validation, route timeline), `iPhoneRemote/SpoofRemote/OnDevice` (tunnel, mounting, controller, local motion), and `iPhoneRemote/Tests` (hosted control tests). The library is [idevice](https://github.com/jkcoxson/idevice) at master commit [2dca9a58](https://github.com/jkcoxson/idevice/commit/2dca9a58), built by idevice's own CI and pinned by checksum in `fetch-idevice.sh`. No release has its iOS 27 fixes yet: every RSD handshake presents the same host UUID (since iOS 27.2 a new one makes the iPhone close every developer service it advertised, which cut the location after any reconnect), and the tunnel's TCP stack is fixed for iOS 27. None of the functions the app calls changed signature or ownership from 0.1.68.
 
 Apple can change developer protocols or stop a background app. The project cannot promise every iOS 17+ minor/future build or perpetual operation after force quit/reboot. One-time installation/pairing and signing refresh remain separate prerequisites.
