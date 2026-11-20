@@ -182,11 +182,20 @@ public struct TunnelFailure: Error, Equatable, Sendable, LocalizedError {
         + "and check that it says Connected, with Device IP 10.7.0.1, or turn it off and on. Then try again. "
         + "If it still fails, allow AnyWhere in Settings ▸ Privacy & Security ▸ Local Network."
 
+    /// What to do on cellular data alone, in order. iOS turns LocalDevVPN's connection away on
+    /// cellular, but a connection made in Airplane Mode keeps going after Airplane Mode is turned off.
+    public static let cellularSteps = [
+        "Turn on Airplane Mode.",
+        "Check that LocalDevVPN still says Connected.",
+        "Tap Start Here, or Drive Route.",
+        "Once it's running, turn Airplane Mode off. You're good to go.",
+    ]
+
     /// The message when nothing answers and cellular data is the iPhone's only network: iOS turns
     /// LocalDevVPN's connection away then, so checking LocalDevVPN would not help.
-    public static let cellularExplanation = "This iPhone is on cellular data, and iOS doesn't let LocalDevVPN reach "
-        + "the developer services over cellular. Join Wi‑Fi, or keep LocalDevVPN connected and turn on Airplane Mode. "
-        + "Then try again."
+    public static let cellularExplanation = "On cellular data only, iOS blocks LocalDevVPN. "
+        + cellularSteps.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: " ")
+        + " (Or join Wi‑Fi and try again.)"
 
     /// The small print: enough for a bug report to say exactly what failed,
     /// one line for each route tried.

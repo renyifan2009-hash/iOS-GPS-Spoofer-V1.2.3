@@ -48,6 +48,9 @@ struct ContentView: View {
     @State private var macMode: MacMode = .teleport
     /// How far out the map is, so following the simulated location keeps the zoom.
     @State private var mapDistance: CLLocationDistance = 3500
+    /// The iPhone was on cellular data alone and hasn't finished the Airplane Mode steps: show them, and
+    /// once a location runs in Airplane Mode, say it's time to turn Airplane Mode off.
+    @State private var cellularGuide = false
     /// Where the search bar and buttons at the top, and the card at the bottom, sit on the screen. A tap
     /// there is for them, never the map's, even when a button's glass lets it through.
     @State private var controlFrames: [String: CGRect] = [:]
@@ -228,6 +231,18 @@ struct ContentView: View {
             // Is LocalDevVPN on? The status pill says so before you tap Start, and if it's off it is
             // opened by itself (it comes straight back here).
             await checkVPN()
+        }
+        .onChange(of: phone.onCellularOnly) { _, cellularOnly in
+            // Cellular alone: the Airplane Mode steps start. Back on cellular with a location running:
+            // Airplane Mode is off again, and the steps are done.
+            if cellularOnly { cellularGuide = !phone.isSpoofing }
+        }
+        .onChange(of: phone.isSpoofing) { _, spoofing in
+            if !spoofing, !phone.onCellularOnly { cellularGuide = false }
+        }
+        .onChange(of: phone.onWiFi) { _, wifi in
+            // On Wi‑Fi LocalDevVPN works as it is: no Airplane Mode steps.
+            if wifi { cellularGuide = false }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { phoneMotion?.releaseJoystick() }
@@ -779,6 +794,17 @@ struct ContentView: View {
                 .transition(.rise)
         } else {
             macModePicker
+            if !phone.isSpoofing, phone.onCellularOnly || cellularGuide {
+                CellularStepsCard(inAirplaneMode: !phone.onCellularOnly)
+                    .transition(.rise)
+            } else if phone.isSpoofing, cellularGuide, !phone.onCellularOnly {
+                Label("It's running. Turn Airplane Mode off now; the location keeps going.",
+                      systemImage: "airplane.departure")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Brand.live)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.rise)
+            }
             if phone.isSpoofing, let current = phone.current {
                 PhoneSimulatingRow(name: phone.currentName, coordinate: current)
                     .transition(.rise)
@@ -1361,5 +1387,39 @@ private struct DeviceMarker: View {
             guard !reduceMotion else { return }
             withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { ripple = true }
         }
+    }
+}
+
+/// What to do when the iPhone is on cellular data alone: iOS blocks LocalDevVPN there, but a location
+/// started in Airplane Mode keeps going once Airplane Mode is turned off again.
+private struct CellularStepsCard: View {
+    /// Step 1 is done: the iPhone isn't on cellular now.
+    let inAirplaneMode: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("On cellular data only", systemImage: "antenna.radiowaves.left.and.right")
+                .font(.subheadline.weight(.semibold))
+            Text("iOS blocks LocalDevVPN on cellular, so:")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            ForEach(Array(TunnelFailure.cellularSteps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: index == 0 && inAirplaneMode ? "checkmark.circle.fill" : "\(index + 1).circle")
+                        .foregroundStyle(index == 0 && inAirplaneMode ? Brand.live : .secondary)
+                    Text(step)
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text("If LocalDevVPN is off, turn Airplane Mode off, connect LocalDevVPN, then start again from step 1.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 18, tint: Brand.warning.opacity(0.25))
+        .accessibilityElement(children: .combine)
     }
 }

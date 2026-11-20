@@ -31,6 +31,12 @@ final class TunnelFailureTests: XCTestCase {
     func testOnCellularDataAloneTheMessageSaysSoInsteadOfBlamingLocalDevVPN() {
         let refused = tunnel(remotePairing, code: 16, #"InternalError("connect: device socket io failed")"#)
         XCTAssertEqual(refused.explanation(onCellularOnly: true), TunnelFailure.cellularExplanation)
+        // The Airplane Mode steps, in the order that works: on, check LocalDevVPN, start, then off again.
+        XCTAssertEqual(TunnelFailure.cellularSteps.count, 4)
+        XCTAssertTrue(TunnelFailure.cellularSteps[0].contains("Turn on Airplane Mode"))
+        XCTAssertTrue(TunnelFailure.cellularSteps[1].contains("LocalDevVPN"))
+        XCTAssertTrue(TunnelFailure.cellularSteps[3].contains("turn Airplane Mode off"))
+        XCTAssertTrue(TunnelFailure.cellularExplanation.contains("1. Turn on Airplane Mode."))
         XCTAssertEqual(refused.explanation(onCellularOnly: false), TunnelFailure.unreachableExplanation)
         // Only not reaching the iPhone is cellular's doing: a pairing the iPhone turns down is still that.
         let denied = tunnel(remotePairing, code: 31, "UserDeniedPairing")
