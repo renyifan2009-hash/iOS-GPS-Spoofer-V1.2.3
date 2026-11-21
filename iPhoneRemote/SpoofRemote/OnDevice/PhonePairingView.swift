@@ -33,7 +33,6 @@ struct PhonePairingView: View {
                 }
             }
         }
-        .environment(\.colorScheme, .dark)
         .tint(Brand.sky)
         .onDisappear { pairing.cancel() }
         .sensoryFeedback(.success, trigger: pairing.state) { _, state in state == .done }
@@ -54,7 +53,7 @@ struct PhonePairingView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .cardSurface(cornerRadius: 20)
 
         status
     }
@@ -92,7 +91,7 @@ struct PhonePairingView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(18)
-            .glassSurface(cornerRadius: 20, tint: Brand.sky.opacity(0.25))
+            .cardSurface(cornerRadius: 20, tint: Brand.sky)
         case .finishing:
             HStack(spacing: 10) {
                 ProgressView()

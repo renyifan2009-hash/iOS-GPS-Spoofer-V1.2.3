@@ -60,7 +60,7 @@ struct MapSearchView: View {
                 VStack(spacing: 12) {
                     IconTile(symbol: "magnifyingglass", size: 52)
                     Text("Search anywhere")
-                        .font(Brand.rounded(.title3))
+                        .font(.title3.bold())
                     Text("Try “Apple Park”, a street address, or coordinates like 48.8584, 2.2945. Places you star show up here.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -112,7 +112,7 @@ struct MapSearchView: View {
             Section("Results") {
                 ForEach(search.results) { result in
                     Button { choose(result) } label: {
-                        PlaceRowLabel(title: result.name, subtitle: result.subtitle ?? result.coordinateText, symbol: "mappin.circle.fill",
+                        PlaceRowLabel(title: result.name, subtitle: result.subtitle ?? result.coordinateText, symbol: "mappin",
                                       colors: Brand.pin)
                     }
                 }
@@ -127,7 +127,7 @@ struct MapSearchView: View {
                         }
                     } label: {
                         PlaceRowLabel(title: suggestion.title, subtitle: suggestion.subtitle,
-                                      symbol: suggestion.subtitle.isEmpty ? "magnifyingglass" : "mappin.and.ellipse",
+                                      symbol: suggestion.subtitle.isEmpty ? "magnifyingglass" : "mappin",
                                       colors: [Brand.indigo, Brand.sky])
                     }
                 }
@@ -170,16 +170,24 @@ struct PlaceRowLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            IconTile(symbol: symbol, colors: colors, size: 34)
+            // A round icon, as Find My's lists have.
+            ZStack {
+                Circle().fill((colors.first ?? Brand.sky).gradient)
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 2) {
+                // `Color.primary`, not `.primary`: inside a list's button, `.primary` is the button's blue.
                 Text(title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                         .lineLimit(1)
                 }
             }

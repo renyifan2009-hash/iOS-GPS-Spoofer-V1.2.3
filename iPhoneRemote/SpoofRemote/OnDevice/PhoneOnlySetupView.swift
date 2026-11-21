@@ -52,7 +52,7 @@ struct PhoneOnlySetupView: View {
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .glassSurface(cornerRadius: 18, tint: Brand.warning.opacity(0.45))
+                            .cardSurface(cornerRadius: 18, tint: Brand.warning)
                             .transition(.rise)
                         }
                         footnote
@@ -102,8 +102,7 @@ struct PhoneOnlySetupView: View {
                 if let error = phone.importError { AccessibilityNotification.Announcement(error).post() }
             }
         }
-        .environment(\.colorScheme, .dark)
-        .tint(Brand.sky)     // the app's indigo accent is too dark on this always-dark sheet
+        .tint(Brand.sky)     // Find My's blue for the buttons and links
         .task { await phone.checkLoopback() }
         .onChange(of: scenePhase) { _, phase in
             // Back from LocalDevVPN: see whether it's on now.
@@ -157,7 +156,6 @@ struct PhoneOnlySetupView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(.white)
         .padding(.top, 8)
     }
 
@@ -293,11 +291,11 @@ struct PhoneOnlySetupView: View {
         HStack(alignment: .top, spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(done == true ? AnyShapeStyle(Brand.live) : AnyShapeStyle(Color.white.opacity(0.12)))
+                    .fill(done == true ? AnyShapeStyle(Brand.live) : AnyShapeStyle(Color.primary.opacity(0.1)))
                     .frame(width: 34, height: 34)
                 Image(systemName: done == true ? "checkmark" : symbol)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(done == false ? Brand.warning : .white)
+                    .foregroundStyle(done == false ? Brand.warning : (done == true ? Color.white : Brand.sky))
                     .contentTransition(.symbolEffect(.replace))
             }
             // The tick is the only thing that says whether the step is done. A step
@@ -321,7 +319,6 @@ struct PhoneOnlySetupView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 22)
-        .foregroundStyle(.white)
+        .cardSurface(cornerRadius: 22)
     }
 }

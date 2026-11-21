@@ -46,6 +46,14 @@ struct ContentView: View {
     @State private var joystick = JoystickModel()
     @State private var phoneMotion: PhoneMotionController?
     @State private var macMode: MacMode = .teleport
+    /// The Me tab is open (the other three tabs are `macMode`).
+    @State private var showsMe = false
+    /// How far the panel at the bottom is pulled up.
+    @State private var panelDetent: PanelDetent = .medium
+    /// The map's satellite view, from the map button at the top right.
+    @AppStorage("mapHybrid") private var mapHybrid = false
+    /// Lets the compass sit under the map buttons instead of on top of them.
+    @Namespace private var mapScope
     /// How far out the map is, so following the simulated location keeps the zoom.
     @State private var mapDistance: CLLocationDistance = 3500
     /// The iPhone was on cellular data alone and hasn't finished the Airplane Mode steps: show them, and
@@ -66,28 +74,71 @@ struct ContentView: View {
     /// Either source holds a location right now.
     private var isSpoofing: Bool { connection.isSpoofing || phone.isSpoofing }
 
-    /// How much of the screen the card may take. The joystick card is the tallest (a pad and a pace
-    /// row); the rest of the time the map matters more.
-    private var cardHeightFraction: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 0.7 }
-        return macMode == .joystick && isSpoofing ? 0.74 : 0.6
+    /// How much of the screen the panel takes at its middle height. Steering needs the pad and its
+    /// pace row, and a route its stops; the rest of the time the map matters more.
+    private var mediumFraction: CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return 0.66 }
+        if showsMe { return 0.56 }
+        switch macMode {
+        case .joystick: return isSpoofing ? 0.66 : 0.46
+        case .route: return 0.56
+        case .teleport: return 0.46
+        }
+    }
+
+    /// The tab that's open.
+    private var currentTab: MainTab {
+        if showsMe { return .me }
+        switch macMode {
+        case .teleport: return .teleport
+        case .route: return .route
+        case .joystick: return .joystick
+        }
+    }
+
+    private var tabSelection: Binding<MainTab> {
+        Binding(get: { currentTab }, set: { tab in
+            switch tab {
+            case .me: showsMe = true
+            case .teleport: showsMe = false; macMode = .teleport
+            case .route: showsMe = false; macMode = .route
+            case .joystick: showsMe = false; macMode = .joystick
+            }
+            // A tab opened from the folded-down panel shows what's in it.
+            if panelDetent == .collapsed { panelDetent = .medium }
+        })
     }
 
     var body: some View {
         GeometryReader { screen in
             ZStack {
                 map
-                VStack(spacing: 0) {
-                    topBar
+                // Find My's map buttons: in glass at the top right, the compass under them.
+                VStack(alignment: .trailing, spacing: 10) {
+                    overMap("mapButtons", MapControlStack(hybrid: $mapHybrid,
+                                                          showsLocation: locations.showsReportedLocation) {
+                        withAnimation(Brand.snappy) { locations.toggleReportedLocation() }
+                    })
+                    MapCompass(scope: mapScope)
                     Spacer(minLength: 0)
-                    // The card may take up to 60% of the screen (70% with very large text,
-                    // where the map matters less). Past that it scrolls.
-                    overMap("card", bottomCard(maxHeight: screen.size.height * cardHeightFraction))
                 }
-                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 12)
+                .padding(.top, 4)
+                // At full height the panel covers them.
+                .opacity(panelDetent == .large ? 0 : 1)
+                .allowsHitTesting(panelDetent != .large)
+                .accessibilityHidden(panelDetent == .large)
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    overMap("card", panel(screen))
+                }
+                .padding(.horizontal, 8)
                 .padding(.bottom, 8)
+                .ignoresSafeArea(.container, edges: .bottom)
             }
             .coordinateSpace(.named(Self.screenSpace))
+            .mapScope(mapScope)
         }
         .sheet(isPresented: $showSearch) {
             MapSearchView()
@@ -273,6 +324,11 @@ struct ContentView: View {
             }
         }
         .sensoryFeedback(.selection, trigger: locations.selection?.id)
+        .onChange(of: locations.selection?.id) { _, id in
+            // A place was picked (on the map, in search, from a list): the folded panel opens to show
+            // its Start.
+            if id != nil, panelDetent == .collapsed { withAnimation(Brand.spring) { panelDetent = .medium } }
+        }
         .sensoryFeedback(trigger: isSpoofing) { _, isSpoofing in
             isSpoofing ? .success : .impact(weight: .light)
         }
@@ -412,7 +468,7 @@ struct ContentView: View {
     private var map: some View {
         @Bindable var locations = locations
         return MapReader { proxy in
-            Map(position: $locations.camera) {
+            Map(position: $locations.camera, scope: mapScope) {
                 if let spoofed = spoofedCoordinate {
                     Annotation("Simulated location", coordinate: spoofed, anchor: .center) {
                         DeviceMarker(phase: markerPhase)
@@ -443,10 +499,10 @@ struct ContentView: View {
                     UserAnnotation()
                 }
             }
-            // Muted: the map's softer colours suit the app's and keep the pins easy to see.
-            .mapStyle(.standard(elevation: .realistic, emphasis: .muted))
+            // The standard map, as in Find My, or satellite from the map button.
+            .mapStyle(mapHybrid ? .hybrid(elevation: .realistic) : .standard(elevation: .realistic))
             .mapControls {
-                MapCompass()
+                // The compass is in the stack at the top right.
                 MapScaleView()
             }
             .onMapCameraChange(frequency: .onEnd) { context in
@@ -458,9 +514,13 @@ struct ContentView: View {
             }
             .onTapGesture(coordinateSpace: .named(Self.screenSpace)) { point in
                 // A tap on the controls over the map (the search bar's empty end, say) is theirs.
-                guard !controlFrames.values.contains(where: { $0.contains(point) }),
+                // (The map buttons are hidden at full height; their spot is the map's then.)
+                let controls = controlFrames.filter { panelDetent != .large || $0.key != "mapButtons" }
+                guard !controls.values.contains(where: { $0.contains(point) }),
                       let coordinate = proxy.convert(point, from: .named(Self.screenSpace)) else { return }
                 withAnimation(Brand.spring) {
+                    // From the Me tab, a tap on the map goes back to the tab it's for.
+                    showsMe = false
                     if routeMode {
                         route.add(coordinate)
                     } else {
@@ -472,97 +532,141 @@ struct ContentView: View {
         .ignoresSafeArea()
     }
 
-    // MARK: - Top bar
+    // MARK: - The panel
 
-    /// A search bar across the top, like Maps, with Settings beside it. Under it, on the left, what's
-    /// happening; on the right, the button that shows where iOS thinks this iPhone is.
-    private var topBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            overMap("search", HStack(spacing: 10) {
-                Button {
-                    showSearch = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("Search for a place")
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 48)
-                    // The whole capsule takes the tap. With the glass's own press effect on, a tap on its
-                    // empty end missed the button and went through to the map, which dropped a pin there.
-                    .contentShape(Capsule())
-                    .glassCapsule()
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search for a place")
-                CircleButton(symbol: "gearshape", label: "Settings") { showSettings = true }
-            })
-            HStack(alignment: .top, spacing: 10) {
-                overMap("pill", Button {
-                    if source == .thisPhone { showPhoneSetup = true } else { showPairing = true }
-                } label: {
-                    if source == .thisPhone {
-                        PhonePill(phone: phone)
-                    } else {
-                        StatusPill(connection: connection)
-                    }
-                }
-                .buttonStyle(.plain))
-                Spacer(minLength: 8)
-                overMap("location", CircleButton(symbol: locations.showsReportedLocation ? "location.fill" : "location",
-                                                 label: "Show where iOS says this iPhone is",
-                                                 isOn: locations.showsReportedLocation,
-                                                 tint: locations.showsReportedLocation ? Brand.sky : nil) {
-                    withAnimation(Brand.snappy) { locations.toggleReportedLocation() }
-                })
-            }
+    /// Find My's floating panel: the title, what's happening and the search button at the top, the
+    /// tab's controls under them, and the tabs along the bottom.
+    private func panel(_ screen: GeometryProxy) -> some View {
+        FindMyPanel(detent: $panelDetent,
+                    screenHeight: screen.size.height + screen.safeAreaInsets.top + screen.safeAreaInsets.bottom,
+                    mediumFraction: mediumFraction,
+                    bottomInset: screen.safeAreaInsets.bottom) {
+            panelHeader
+        } content: {
+            panelContent
+        } footer: {
+            PanelTabBar(selection: tabSelection)
         }
-        .padding(.top, 6)
     }
 
-    // MARK: - Bottom card
+    private var panelTitle: String {
+        switch currentTab {
+        case .teleport: locations.selection?.name ?? "Teleport"
+        case .route: route.name ?? "Route"
+        case .joystick: "Joystick"
+        case .me: "Me"
+        }
+    }
 
-    /// What is under the source picker: the notices, then the card for the chosen source.
-    private var cardBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            otherSourceHoldingNotice
-            if SigningStatus.isEndingSoon {
-                signingNotice.transition(.rise)
+    /// Under the title, for a chosen place: its address, as Find My shows a person's.
+    private var panelSubtitle: String? {
+        guard currentTab == .teleport, let place = locations.selection else { return nil }
+        return place.subtitle.flatMap { $0.isEmpty ? nil : $0 } ?? place.coordinateText
+    }
+
+    private var panelHeader: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(panelTitle)
+                    .font(.title.bold())
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    .minimumScaleFactor(0.7)
+                    .contentTransition(.opacity)
+                    .accessibilityAddTraits(.isHeader)
+                if let subtitle = panelSubtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+                statusLine
             }
-            UpdateNoticeView()
-            if source == .thisPhone {
+            Spacer(minLength: 8)
+            HStack(spacing: 8) {
+                if currentTab == .me {
+                    PanelHeaderButton(symbol: "gearshape", label: "Settings") { showSettings = true }
+                } else {
+                    PanelHeaderButton(symbol: "magnifyingglass", label: "Search for a place") { showSearch = true }
+                }
+                if currentTab == .teleport, locations.selection != nil {
+                    PanelHeaderButton(symbol: "xmark", label: "Clear the chosen place") {
+                        withAnimation(Brand.spring) { locations.selection = nil }
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+        .animation(Brand.spring, value: panelTitle)
+    }
+
+    /// What's happening, in colour like Find My's green "Now". A tap opens the setup or the pairing.
+    private var statusLine: some View {
+        let display = source == .thisPhone ? PhonePill(phone: phone).display : StatusPill(connection: connection).display
+        return Button {
+            if source == .thisPhone { showPhoneSetup = true } else { showPairing = true }
+        } label: {
+            HStack(spacing: 6) {
+                if display.live {
+                    PulsingDot(color: display.color, size: 7)
+                } else {
+                    Circle().fill(display.color).frame(width: 7, height: 7)
+                }
+                Text(display.text)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(statusTextColor(display.color))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                    .contentTransition(.opacity)
+            }
+            // A taller place to tap than the line itself, without making the header taller.
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .padding(.vertical, -10)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(source == .thisPhone ? "Opens the setup for this iPhone" : "Opens the pairing with your Mac")
+        .animation(Brand.spring, value: display.text)
+    }
+
+    /// Gray says nothing's wrong; green and orange are darkened to read as text.
+    private func statusTextColor(_ color: Color) -> Color {
+        if color == .gray { return .secondary }
+        if color == Brand.warning { return Brand.warningText }
+        if color == Brand.live { return Brand.liveText }
+        return color
+    }
+
+    /// About the whole app, not one tab: the other source holding a location, signing about to run out,
+    /// a newer version. Each tab puts them under its buttons, so Start and Stop stay in view.
+    @ViewBuilder
+    private var notices: some View {
+        otherSourceHoldingNotice
+        if SigningStatus.isEndingSoon {
+            signingNotice.transition(.rise)
+        }
+        UpdateNoticeView()
+    }
+
+    /// The open tab, with the notices under its buttons.
+    private var panelContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if showsMe {
+                notices
+                meContent
+                    .transition(.opacity)
+            } else if source == .thisPhone {
                 phoneCard
             } else {
                 macCard
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func bottomCard(maxHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // The part under the picker is exactly as tall as what is in it, up to the limit, and scrolls
-            // past that. (A small iPhone, or large text, would otherwise push the buttons off the
-            // bottom. A flexible frame here stretched the card to the limit even when it was nearly
-            // empty, over half the map.)
-            ScrollView { cardBody }
-                .scrollBounceBehavior(.basedOnSize)
-                // Capped, then sized to what is in it: `frame(maxHeight:)` before `fixedSize` gives the
-                // content's height up to the cap, and the scroll view scrolls only past it.
-                .frame(maxHeight: max(160, maxHeight - 50 - (hasPinnedAction ? 70 : 0)))
-                .fixedSize(horizontal: false, vertical: true)
-            // The main button stays put at the bottom, however much is above it to scroll.
-            pinnedAction
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .glassSurface(cornerRadius: 32)
+        .padding(.top, 4)
         .animation(Brand.spring, value: source)
         .animation(Brand.spring, value: macMode)
+        .animation(Brand.spring, value: showsMe)
         .animation(Brand.spring, value: route.stops.count)
         .animation(Brand.spring, value: connection.isPaired)
         .animation(Brand.spring, value: isSpoofing)
@@ -576,61 +680,164 @@ struct ContentView: View {
         .animation(Brand.spring, value: updates.updateAvailable)
     }
 
-    // MARK: - The pinned action (Mac)
+    // MARK: - Me
 
-    private var hasPinnedAction: Bool {
-        guard source == .mac, connection.isPaired else { return false }
-        switch macMode {
-        case .teleport, .joystick: return true
-        case .route: return !isDrivingRoute
+    private var isBusy: Bool { isSpoofing || phone.isWorking || connection.isWorking }
+
+    /// Where the location is controlled from, the iPhone and the Mac, Settings and the plan.
+    private var meContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Control From")
+                    .font(.title3.bold())
+                Picker("Control from", selection: $source.animation(Brand.spring)) {
+                    Text("This iPhone").tag(LocationSource.thisPhone)
+                    Text("Mac").tag(LocationSource.mac)
+                }
+                .pickerStyle(.segmented)
+                .disabled(isBusy)
+                if phone.isSpoofing {
+                    holdingRow("This iPhone is holding a location.") { _ = await phoneMotion?.stop() }
+                } else if connection.isSpoofing {
+                    holdingRow("The Mac is holding a location.") { _ = await connection.stop() }
+                }
+                Text(isBusy ? "Stop the current location to switch."
+                            : "This iPhone works on its own with LocalDevVPN. A Mac holds the location over a cable or Wi‑Fi.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            GroupedCard {
+                PanelRow(symbol: "iphone", title: "This iPhone", value: phoneSetupValue) { presentPhoneSetup() }
+                Divider().padding(.leading, 40)
+                PanelRow(symbol: "laptopcomputer", title: "Mac",
+                         value: connection.isPaired ? (connection.server?.name ?? "Paired") : "Not paired") {
+                    showPairing = true
+                }
+            }
+            GroupedCard {
+                PanelRow(symbol: "gearshape", title: "Settings") { showSettings = true }
+                if PaymentsConfig.isEnabled {
+                    Divider().padding(.leading, 40)
+                    PanelRow(symbol: "sparkles", title: "AnyWhere Pro", value: licenses.summary) { showPaywall = true }
+                }
+            }
+            Text(appVersion)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 
+    private var phoneSetupValue: String {
+        guard OnDeviceController.isSupported else { return "Needs iOS 17" }
+        return phone.isSetUp ? "Ready" : "Set Up"
+    }
+
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "AnyWhere \(version) (\(build))"
+    }
+
+    // MARK: - Places
+
+    /// A Teleport tab with nothing chosen: how to pick a place, then the favourites and recent places,
+    /// as Find My lists people.
     @ViewBuilder
-    private var pinnedAction: some View {
-        if hasPinnedAction {
-            switch macMode {
-            case .teleport: actions
-            case .route: driveRouteButton
-            case .joystick: joystickButton
+    private var placesList: some View {
+        Label("Tap the map or search to pick a place.", systemImage: "hand.tap.fill")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .transition(.rise)
+        if !locations.favorites.isEmpty {
+            placeSection("Favorites", Array(locations.favorites), symbol: "star.fill", tint: .orange)
+                .transition(.rise)
+        }
+        let recents = locations.recents.filter { recent in
+            !locations.favorites.contains { $0.isSameSpot(as: recent) }
+        }
+        if !recents.isEmpty {
+            placeSection("Recents", Array(recents.prefix(6)), symbol: "clock.fill", tint: .gray)
+                .transition(.rise)
+        }
+    }
+
+    private func placeSection(_ title: String, _ places: [Place], symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.title3.bold())
+                .padding(.bottom, 2)
+            ForEach(Array(places.enumerated()), id: \.element.id) { index, place in
+                if index > 0 { Divider().padding(.leading, 56) }
+                PanelPlaceRow(symbol: symbol, tint: tint, title: place.name,
+                              subtitle: place.subtitle.flatMap { $0.isEmpty ? nil : $0 } ?? place.coordinateText) {
+                    withAnimation(Brand.spring) { locations.select(place) }
+                }
             }
         }
     }
 
-    private var driveRouteButton: some View {
-        GlassGroup(spacing: 10) {
-            Button {
-                driveRoute()
-            } label: {
-                Label(connection.findingRoads ? "Finding roads…" : connection.isWorking ? "Starting…" : "Drive Route",
-                      systemImage: route.driving ? "car.fill" : "figure.walk")
-                    .frame(maxWidth: .infinity)
-                    .contentTransition(.opacity)
+    /// Find My's star: add the chosen place to Favorites, or take it off.
+    private func favoriteTile(_ place: Place) -> some View {
+        let favorite = locations.isFavorite(place)
+        return ActionTile(symbol: favorite ? "star.fill" : "star", title: favorite ? "Favorite" : "Add to Favorites",
+                          iconColor: favorite ? .orange : Brand.sky) {
+            withAnimation(Brand.snappy) { locations.toggleFavorite(place) }
+        }
+        .accessibilityLabel(favorite ? "Remove from favorites" : "Add to favorites")
+    }
+
+    // MARK: - Mac actions
+
+    private var macTeleportTiles: some View {
+        buttonRow {
+            if connection.isSpoofing {
+                if let place = locations.selection, !isCurrent(place) {
+                    ActionTile(symbol: "arrow.triangle.turn.up.right.diamond.fill", title: "Move Here", fill: Brand.sky) {
+                        send(.move, place)
+                    }
+                    .disabled(connection.isWorking)
+                    .transition(.scale.combined(with: .opacity))
+                }
+                ActionTile(symbol: "stop.fill", title: "Stop", fill: Brand.danger) {
+                    Task { await connection.stop() }
+                }
+                .disabled(connection.isWorking)
+            } else {
+                ActionTile(symbol: "location.fill", title: connection.isWorking ? "Starting…" : "Start Here", fill: Brand.sky) {
+                    if let place = locations.selection { send(.start, place) }
+                }
+                .disabled(locations.selection == nil || connection.isWorking || !connection.isOnline)
             }
-            .prominentButton()
+            if let place = locations.selection { favoriteTile(place) }
+        }
+    }
+
+    private var macRouteTiles: some View {
+        buttonRow {
+            ActionTile(symbol: route.driving ? "car.fill" : "figure.walk",
+                       title: connection.findingRoads ? "Finding roads…" : connection.isWorking ? "Starting…" : "Drive Route",
+                       fill: Brand.sky) {
+                driveRoute()
+            }
             .disabled(!route.canDrive || connection.isWorking || connection.findingRoads || !connection.isOnline)
         }
     }
 
-    private var joystickButton: some View {
-        GlassGroup(spacing: 10) {
+    private var macJoystickTiles: some View {
+        buttonRow {
             if connection.isSpoofing {
-                Button {
+                ActionTile(symbol: "stop.fill", title: "Stop", fill: Brand.danger) {
                     Task { await connection.stop() }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity)
                 }
-                .prominentButton(tint: Brand.danger)
             } else {
-                Button {
+                ActionTile(symbol: "gamecontroller.fill", title: connection.isWorking ? "Starting…" : "Start Joystick",
+                           fill: Brand.sky) {
                     startJoystick()
-                } label: {
-                    Label(connection.isWorking ? "Starting…" : "Start Joystick", systemImage: "location.fill")
-                        .frame(maxWidth: .infinity)
-                        .contentTransition(.opacity)
                 }
-                .prominentButton()
-                .disabled(locations.selection == nil || connection.isWorking || !connection.isOnline)
+                .disabled(locations.selection == nil || !connection.isOnline)
             }
         }
         .disabled(connection.isWorking)
@@ -669,27 +876,10 @@ struct ContentView: View {
     @ViewBuilder
     private var macCard: some View {
         if !connection.isPaired {
+            notices
             connectPrompt
                 .transition(.rise)
         } else {
-            if connection.isSpoofing, let status = connection.status {
-                switch macMode {
-                case .teleport:
-                    NowSimulatingRow(status: status)
-                        .transition(.rise)
-                    AutoStopRow(connection: connection)
-                        .transition(.rise)
-                case .route:
-                    // A route that is driving has its own progress card; building one needs the room.
-                    if !isDrivingRoute {
-                        HeldStrip(status: status, connection: connection)
-                            .transition(.rise)
-                    }
-                case .joystick:
-                    // Steering says where it is, and how fast, in its own header.
-                    EmptyView()
-                }
-            }
             if let status = connection.status, !status.connected, connection.isOnline {
                 Label("The Mac can't see this iPhone. Connect them with a cable and tap Trust.",
                       systemImage: "cable.connector")
@@ -697,29 +887,44 @@ struct ContentView: View {
                     .foregroundStyle(Brand.warningText)
                     .transition(.rise)
             }
-            // Always there, so a place can be held first and then steered or driven from.
-            macModePicker
-                .transition(.rise)
             switch macMode {
             case .teleport:
-                if let place = locations.selection {
-                    selectionRow(place)
+                if locations.selection != nil || connection.isSpoofing {
+                    macTeleportTiles
                         .transition(.rise)
-                } else if !connection.isSpoofing {
-                    Label("Tap the map or search to pick a place.", systemImage: "hand.tap.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                }
+                notices
+                if connection.isSpoofing, let status = connection.status {
+                    NowSimulatingRow(status: status)
                         .transition(.rise)
+                    AutoStopRow(connection: connection)
+                        .transition(.rise)
+                }
+                if locations.selection == nil, !connection.isSpoofing {
+                    placesList
                 }
             case .route:
                 if isDrivingRoute {
+                    notices
                     RouteProgressCardView(route: route, connection: connection)
                         .transition(.rise)
                 } else {
+                    macRouteTiles
+                        .transition(.rise)
+                    notices
+                    // Something held already: say what, with its Stop. Building a route needs the room.
+                    if connection.isSpoofing, let status = connection.status {
+                        HeldStrip(status: status, connection: connection)
+                            .transition(.rise)
+                    }
                     RouteCardView(route: route, connection: connection, library: routeLibrary)
                         .transition(.rise)
                 }
             case .joystick:
+                // Steering says where it is, and how fast, in its own header.
+                macJoystickTiles
+                    .transition(.rise)
+                notices
                 JoystickCardView(joystick: joystick, connection: connection,
                                  hasPlace: locations.selection != nil || connection.isSpoofing)
                     .transition(.rise)
@@ -728,7 +933,7 @@ struct ContentView: View {
                 ErrorNotice(message: error)
                     .transition(.rise)
             } else if case .offline(let reason) = connection.link {
-                // The pill only says "offline". This says why, and what to try.
+                // The status line only says "offline". This says why, and what to try.
                 Label(reason, systemImage: "wifi.exclamationmark")
                     .font(.footnote)
                     .foregroundStyle(Brand.warningText)
@@ -736,28 +941,6 @@ struct ContentView: View {
                     .transition(.rise)
             }
         }
-    }
-
-    private var macModePicker: some View {
-        Picker("Mode", selection: $macMode) {
-            Text("Teleport").tag(MacMode.teleport)
-            Text("Route").tag(MacMode.route)
-            Text("Joystick").tag(MacMode.joystick)
-        }
-        .pickerStyle(.segmented)
-    }
-
-    private var stopAction: some View {
-        GlassGroup(spacing: 10) {
-            Button {
-                Task { await connection.stop() }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .prominentButton(tint: Brand.danger)
-        }
-        .disabled(connection.isWorking)
     }
 
     /// The Mac is planning or driving a route.
@@ -790,72 +973,77 @@ struct ContentView: View {
     @ViewBuilder
     private var phoneCard: some View {
         if !OnDeviceController.isSupported || !phone.isSetUp {
+            notices
             phoneSetupPrompt
                 .transition(.rise)
         } else {
-            macModePicker
-            if !phone.isSpoofing, phone.onCellularOnly || cellularGuide {
-                CellularStepsCard(inAirplaneMode: !phone.onCellularOnly)
-                    .transition(.rise)
-            } else if phone.isSpoofing, cellularGuide, !phone.onCellularOnly {
-                Label("It's running. Turn Airplane Mode off now; the location keeps going.",
-                      systemImage: "airplane.departure")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Brand.live)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.rise)
-            }
-            if phone.isSpoofing, let current = phone.current {
-                PhoneSimulatingRow(name: phone.currentName, coordinate: current)
-                    .transition(.rise)
-            }
-            if macMode == .teleport, let place = locations.selection {
-                selectionRow(place)
-                    .transition(.rise)
-            } else if macMode == .teleport, !phone.isSpoofing {
-                Label("Tap the map or search to pick a place.", systemImage: "hand.tap.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .transition(.rise)
-            }
             if let motion = phoneMotion {
                 switch macMode {
                 case .teleport:
-                    if phone.isSpoofing { AutoStopRow(connection: motion) }
-                    phoneActions
+                    if locations.selection != nil || phone.isSpoofing {
+                        phoneTeleportTiles
+                            .transition(.rise)
+                    }
+                    notices
+                    cellularSteps
+                    phoneHeldRow
+                    if phone.isSpoofing {
+                        AutoStopRow(connection: motion)
+                            .transition(.rise)
+                    }
+                    if locations.selection == nil, !phone.isSpoofing {
+                        placesList
+                    }
                 case .route:
                     if motion.planning || motion.activity == "route", phone.isSpoofing || motion.planning {
+                        notices
+                        cellularSteps
+                        phoneHeldRow
                         RouteProgressCardView(route: route, connection: motion)
                     } else {
+                        buttonRow {
+                            ActionTile(symbol: "play.fill", title: "Drive Route", fill: Brand.sky) {
+                                guard requirePro(), let request = route.request() else { return }
+                                let snapshot = route.snapshot(named: route.name ?? "iPhone route")
+                                let limits = route.driving && route.natural && route.followRoads && route.followSpeedLimits
+                                Task {
+                                    if await motion.driveRoute(request, followSpeedLimits: limits) {
+                                        routeLibrary.recordRecent(snapshot)
+                                    }
+                                }
+                            }
+                            .disabled(!route.canDrive || motion.isWorking)
+                            if phone.isSpoofing {
+                                ActionTile(symbol: "stop.fill", title: "Stop", fill: Brand.danger) {
+                                    Task { _ = await motion.stop() }
+                                }
+                            }
+                        }
+                        notices
+                        cellularSteps
+                        phoneHeldRow
                         RouteCardView(route: route, connection: motion, library: routeLibrary)
                         Text(phoneRouteNote)
                             .font(.footnote).foregroundStyle(.secondary)
-                        Button {
-                            guard requirePro(), let request = route.request() else { return }
-                            let snapshot = route.snapshot(named: route.name ?? "iPhone route")
-                            let limits = route.driving && route.natural && route.followRoads && route.followSpeedLimits
-                            Task {
-                                if await motion.driveRoute(request, followSpeedLimits: limits) { routeLibrary.recordRecent(snapshot) }
-                            }
-                        } label: { Label("Drive Route", systemImage: "play.fill").frame(maxWidth: .infinity) }
-                        .prominentButton()
-                        .disabled(!route.canDrive || motion.isWorking)
-                        if phone.isSpoofing {
-                            Button("Stop") { Task { _ = await motion.stop() } }.prominentButton(tint: Brand.danger)
-                        }
                     }
                 case .joystick:
-                    JoystickCardView(joystick: joystick, connection: motion, hasPlace: locations.selection != nil)
-                    if phone.isSpoofing {
-                        Button("Stop") { Task { _ = await motion.stop() } }.prominentButton(tint: Brand.danger)
-                    } else {
-                        Button {
-                            guard requirePro(), let place = locations.selection else { return }
-                            Task { _ = await motion.start(at: place.coordinate, name: place.name, joystick: true) }
-                        } label: { Label("Start Joystick", systemImage: "gamecontroller.fill").frame(maxWidth: .infinity) }
-                        .prominentButton()
-                        .disabled(locations.selection == nil || motion.isWorking)
+                    buttonRow {
+                        if phone.isSpoofing {
+                            ActionTile(symbol: "stop.fill", title: "Stop", fill: Brand.danger) {
+                                Task { _ = await motion.stop() }
+                            }
+                        } else {
+                            ActionTile(symbol: "gamecontroller.fill", title: "Start Joystick", fill: Brand.sky) {
+                                guard requirePro(), let place = locations.selection else { return }
+                                Task { _ = await motion.start(at: place.coordinate, name: place.name, joystick: true) }
+                            }
+                            .disabled(locations.selection == nil || motion.isWorking)
+                        }
                     }
+                    notices
+                    cellularSteps
+                    phoneHeldRow
+                    JoystickCardView(joystick: joystick, connection: motion, hasPlace: locations.selection != nil)
                 }
                 if let error = motion.lastError, !phone.isReconnecting, phone.lastError == nil {
                     ErrorNotice(message: error)
@@ -894,7 +1082,7 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 IconTile(symbol: "iphone.gen3.radiowaves.left.and.right", size: 46)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Use this iPhone on its own").font(Brand.rounded(.title3))
+                    Text("Use this iPhone on its own").font(.title3.bold())
                     Text(OnDeviceController.isSupported
                          ? "Needs a one-time file from your Mac. Tap Set Up for the steps."
                          : "Needs iOS 17 or later. Use your Mac instead, or update this iPhone.")
@@ -933,41 +1121,56 @@ struct ContentView: View {
             : AnyLayout(HStackLayout(spacing: 10))
     }
 
-    private var phoneActions: some View {
-        GlassGroup(spacing: 10) {
-            buttonRow {
-                if phone.isSpoofing {
-                    if let place = locations.selection, !phoneIsAt(place) {
-                        Button {
-                            setPhone(place)
-                        } label: {
-                            Label("Move Here", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .prominentButton()
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                    Button {
-                        Task { _ = await phoneMotion?.stop() }
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .prominentButton(tint: Brand.danger)
-                } else {
-                    Button {
-                        if let place = locations.selection { setPhone(place) }
-                    } label: {
-                        Label(phone.phase == .stopping ? "Stopping…" : (phone.isWorking ? "Starting…" : "Start Here"), systemImage: "location.fill")
-                            .frame(maxWidth: .infinity)
-                            .contentTransition(.opacity)
-                    }
-                    .prominentButton()
-                    .disabled(locations.selection == nil || phone.isWorking)
-                }
-            }
+    /// What this iPhone is holding, on every tab: where it is, while a route or the joystick runs too.
+    @ViewBuilder
+    private var phoneHeldRow: some View {
+        if phone.isSpoofing, let current = phone.current {
+            PhoneSimulatingRow(name: phone.currentName, coordinate: current)
+                .transition(.rise)
         }
-        .disabled(phone.isWorking)
+    }
+
+    /// On cellular data alone: the Airplane Mode steps, right under the button they lead to. Once it runs
+    /// in Airplane Mode, the word to turn Airplane Mode off.
+    @ViewBuilder
+    private var cellularSteps: some View {
+        if !phone.isSpoofing, phone.onCellularOnly || cellularGuide {
+            CellularStepsCard(inAirplaneMode: !phone.onCellularOnly)
+                .transition(.rise)
+        } else if phone.isSpoofing, cellularGuide, !phone.onCellularOnly {
+            Label("It's running. Turn Airplane Mode off now; the location keeps going.",
+                  systemImage: "airplane.departure")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Brand.liveText)
+                .fixedSize(horizontal: false, vertical: true)
+                .transition(.rise)
+        }
+    }
+
+    private var phoneTeleportTiles: some View {
+        buttonRow {
+            if phone.isSpoofing {
+                if let place = locations.selection, !phoneIsAt(place) {
+                    ActionTile(symbol: "arrow.triangle.turn.up.right.diamond.fill", title: "Move Here", fill: Brand.sky) {
+                        setPhone(place)
+                    }
+                    .disabled(phone.isWorking)
+                    .transition(.scale.combined(with: .opacity))
+                }
+                ActionTile(symbol: "stop.fill", title: "Stop", fill: Brand.danger) {
+                    Task { _ = await phoneMotion?.stop() }
+                }
+                .disabled(phone.isWorking)
+            } else {
+                ActionTile(symbol: "location.fill",
+                           title: phone.phase == .stopping ? "Stopping…" : (phone.isWorking ? "Starting…" : "Start Here"),
+                           fill: Brand.sky) {
+                    if let place = locations.selection { setPhone(place) }
+                }
+                .disabled(locations.selection == nil || phone.isWorking)
+            }
+            if let place = locations.selection { favoriteTile(place) }
+        }
     }
 
     /// Under the iPhone's route card: how it will drive.
@@ -1001,7 +1204,7 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 IconTile(symbol: "laptopcomputer.and.iphone", size: 46)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Connect your Mac").font(Brand.rounded(.title3))
+                    Text("Connect your Mac").font(.title3.bold())
                     Text("Your Mac holds the simulated location; this iPhone tells it where to go.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -1030,75 +1233,6 @@ struct ContentView: View {
         }
     }
 
-    private func selectionRow(_ place: Place) -> some View {
-        let favorite = locations.isFavorite(place)
-        return HStack(spacing: 12) {
-            IconTile(symbol: "mappin", colors: Brand.pin,
-                     size: 42)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(place.name)
-                    .font(Brand.rounded(.title3))
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-                Text(place.subtitle.flatMap { $0.isEmpty ? nil : $0 } ?? place.coordinateText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-            }
-            Spacer(minLength: 0)
-            Button {
-                withAnimation(Brand.snappy) { locations.toggleFavorite(place) }
-            } label: {
-                Image(systemName: favorite ? "star.fill" : "star")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(favorite ? Color.yellow : Color.secondary)
-                    .symbolEffect(.bounce, value: favorite)
-                    .frame(width: 44, height: 44)
-                    .glassCircle()
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(favorite ? "Remove from favorites" : "Add to favorites")
-        }
-    }
-
-    private var actions: some View {
-        GlassGroup(spacing: 10) {
-            buttonRow {
-                if connection.isSpoofing {
-                    if let place = locations.selection, !isCurrent(place) {
-                        Button {
-                            send(.move, place)
-                        } label: {
-                            Label("Move Here", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .prominentButton()
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                    Button {
-                        Task { await connection.stop() }
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .prominentButton(tint: Brand.danger)
-                } else {
-                    Button {
-                        if let place = locations.selection { send(.start, place) }
-                    } label: {
-                        Label(connection.isWorking ? "Starting…" : "Start Here", systemImage: "location.fill")
-                            .frame(maxWidth: .infinity)
-                            .contentTransition(.opacity)
-                    }
-                    .prominentButton()
-                    .disabled(locations.selection == nil || connection.isWorking || !connection.isOnline)
-                }
-            }
-        }
-        .disabled(connection.isWorking)
-    }
-
     private enum Command { case start, move }
 
     private func send(_ command: Command, _ place: Place) {
@@ -1122,11 +1256,12 @@ struct ContentView: View {
 
 // MARK: - Pieces
 
-/// Mac link + iPhone link + what's happening, in one capsule.
-private struct StatusPill: View {
+/// Mac link + iPhone link + what's happening, for the line under the panel's title.
+@MainActor
+private struct StatusPill {
     let connection: ConnectionManager
 
-    private var display: (text: String, color: Color, live: Bool) {
+    var display: (text: String, color: Color, live: Bool) {
         switch connection.link {
         case .unpaired:
             return ("Not connected · Tap to pair", .gray, false)
@@ -1147,18 +1282,14 @@ private struct StatusPill: View {
             }
         }
     }
-
-    var body: some View {
-        let display = self.display
-        PillContent(text: display.text, color: display.color, live: display.live)
-    }
 }
 
-/// The iPhone-only mode's status, in the same capsule.
-private struct PhonePill: View {
+/// The iPhone-only mode's status, for the same line.
+@MainActor
+private struct PhonePill {
     let phone: OnDeviceController
 
-    private var display: (text: String, color: Color, live: Bool) {
+    var display: (text: String, color: Color, live: Bool) {
         guard OnDeviceController.isSupported else { return ("This iPhone · Needs iOS 17", Brand.warning, false) }
         guard phone.isSetUp else { return ("This iPhone · Tap to set up", .gray, false) }
         if phone.isReconnecting { return ("Reconnecting · This iPhone", Brand.warning, false) }
@@ -1177,38 +1308,22 @@ private struct PhonePill: View {
             return ("Ready · This iPhone", Brand.live, false)
         }
     }
-
-    var body: some View {
-        let display = self.display
-        PillContent(text: display.text, color: display.color, live: display.live)
-    }
 }
 
-private struct PillContent: View {
-    let text: String
-    let color: Color
-    let live: Bool
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+/// The round green icon of what's being held, like a person's in Find My.
+private struct HeldIcon: View {
+    var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 8) {
-            if live {
-                PulsingDot(color: color, size: 8)
-            } else {
-                Circle().fill(color).frame(width: 8, height: 8)
-            }
-            Text(text)
-                .font(.subheadline.weight(.semibold))
-                // "Not connected · Tap to pair" didn't fit beside the two round buttons even
-                // at the usual text size. It shrinks a little, and wraps with very large text.
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
-                .minimumScaleFactor(0.8)
-                .contentTransition(.opacity)
+        ZStack {
+            Circle().fill(Brand.live.gradient)
+            Image(systemName: "location.fill")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .symbolEffect(.pulse, options: .repeating, isActive: pulsing && !reduceMotion)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .glassCapsule(interactive: true)
-        .animation(Brand.spring, value: text)
+        .frame(width: 44, height: 44)
     }
 }
 
@@ -1219,22 +1334,17 @@ private struct PhoneSimulatingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Brand.gradient).frame(width: 44, height: 44)
-                    .shadow(color: Brand.indigo.opacity(0.5), radius: 10, y: 4)
-                Image(systemName: "location.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
+            HeldIcon()
             VStack(alignment: .leading, spacing: 2) {
-                Text("NOW SIMULATING · THIS IPHONE")
-                    .font(.caption2.weight(.bold))
-                    .kerning(0.8)
-                    .foregroundStyle(.secondary)
                 Text(name ?? "Custom location")
-                    .font(Brand.rounded(.headline))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
                     .contentTransition(.opacity)
+                HStack(spacing: 4) {
+                    Text("Now").foregroundStyle(Brand.liveText).fontWeight(.semibold)
+                    Text("· This iPhone").foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
                 Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -1242,41 +1352,32 @@ private struct PhoneSimulatingRow: View {
             }
             Spacer(minLength: 0)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Now simulating \(name ?? "a custom location") on this iPhone")
     }
 }
 
+/// What the Mac is holding.
 private struct NowSimulatingRow: View {
     let status: RemoteStatus
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Brand.gradient).frame(width: 44, height: 44)
-                    .shadow(color: Brand.indigo.opacity(0.5), radius: 10, y: 4)
-                Image(systemName: "location.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && status.phase != .active)
-            }
+            HeldIcon(pulsing: status.phase != .active)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("NOW SIMULATING")
-                        .font(.caption2.weight(.bold))
-                        .kerning(0.8)
-                        .foregroundStyle(.secondary)
-                    if let engine = status.engine {
-                        Text(engine)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Brand.indigo.opacity(0.18), in: Capsule())
-                    }
-                }
                 Text(status.placeName ?? "Custom location")
-                    .font(Brand.rounded(.headline))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
                     .contentTransition(.opacity)
+                HStack(spacing: 4) {
+                    Text(status.phase == .active ? "Now" : "Starting")
+                        .foregroundStyle(status.phase == .active ? Brand.liveText : Brand.warningText)
+                        .fontWeight(.semibold)
+                    if let engine = status.engine {
+                        Text("· \(engine)").foregroundStyle(.secondary)
+                    }
+                }
+                .font(.subheadline)
                 if let latitude = status.latitude, let longitude = status.longitude {
                     Text(String(format: "%.5f, %.5f", latitude, longitude))
                         .font(.caption.monospacedDigit())
@@ -1300,31 +1401,6 @@ private struct NowSimulatingRow: View {
             }
         }
         .animation(Brand.spring, value: status)
-    }
-}
-
-/// A round glass button with only a symbol. `label` is what VoiceOver says,
-/// and `isOn` (for a button that switches something) is its On or Off.
-private struct CircleButton: View {
-    let symbol: String
-    let label: String
-    var isOn: Bool? = nil
-    var tint: Color? = nil
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 48, height: 48)
-                // The whole circle takes the tap, not just the symbol (see the search bar).
-                .contentShape(Circle())
-                .glassCircle(tint: tint)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityValue(isOn.map { $0 ? "On" : "Off" } ?? "")
     }
 }
 
@@ -1360,7 +1436,8 @@ private struct DeviceMarker: View {
 
     private var color: Color {
         switch phase {
-        case .active: return Brand.indigo
+        // Green like Find My's "Now": iOS's own location dot (the map button) is blue.
+        case .active: return Brand.live
         case .failed: return Brand.danger
         default: return Brand.warning
         }
@@ -1378,7 +1455,7 @@ private struct DeviceMarker: View {
                 .frame(width: 26, height: 26)
                 .shadow(color: .black.opacity(0.3), radius: 5, y: 2)
             Circle()
-                .fill(phase == .active ? AnyShapeStyle(Brand.gradient) : AnyShapeStyle(color))
+                .fill(color.gradient)
                 .frame(width: 18, height: 18)
         }
         .animation(Brand.spring, value: phase)
@@ -1419,7 +1496,7 @@ private struct CellularStepsCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 18, tint: Brand.warning.opacity(0.25))
+        .cardSurface(cornerRadius: 18, tint: Brand.warning)
         .accessibilityElement(children: .combine)
     }
 }
