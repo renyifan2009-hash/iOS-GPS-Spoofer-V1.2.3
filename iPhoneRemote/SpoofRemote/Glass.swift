@@ -10,23 +10,23 @@ import UIKit
 /// SwiftUI 7 ships in the iOS 26 SDK), not on the compiler version: a newer
 /// Swift toolchain can be paired with an older SDK that has no Liquid Glass.
 enum Brand {
-    // Soft, calm tones: sage and mist with a dusty lavender, warm apricot for "wait" and terracotta
-    // for Stop. (The names are the old ones, so every view picked the new palette up at once.)
-    /// The main accent: sage.
-    static let indigo = Color(red: 0.369, green: 0.545, blue: 0.522)
-    /// Dusty lavender.
-    static let violet = Color(red: 0.604, green: 0.576, blue: 0.769)
-    /// The second accent: mist blue.
-    static let sky = Color(red: 0.553, green: 0.706, blue: 0.780)
-    /// Live / ready: soft moss.
-    static let live = Color(red: 0.498, green: 0.702, blue: 0.541)
-    static let warning = Color(red: 0.878, green: 0.659, blue: 0.404)
-    /// Stop and errors: terracotta.
-    static let danger = Color(red: 0.831, green: 0.478, blue: 0.431)
-    /// The dark sheets' background: deep slate green.
-    static let night = Color(red: 0.102, green: 0.145, blue: 0.149)
-    /// Pins: a softer coral than a warning red.
-    static let pin = [Color(red: 0.91, green: 0.56, blue: 0.50), Color(red: 0.78, green: 0.41, blue: 0.37)]
+    // Find My's colours: the system blue for actions and selection, green for what's running ("Now"),
+    // orange for things to check, red for Stop. They follow light and dark mode and Increase Contrast by
+    // themselves. (The names are the old ones, so every view picked the new palette up at once.)
+    /// The main accent: the system blue.
+    static let indigo = Color(.systemBlue)
+    static let violet = Color(.systemIndigo)
+    /// The second accent: the system blue as well, so actions look the same everywhere.
+    static let sky = Color(.systemBlue)
+    /// Live / ready: the system green, Find My's "Now".
+    static let live = Color(.systemGreen)
+    static let warning = Color(.systemOrange)
+    /// Stop and errors.
+    static let danger = Color(.systemRed)
+    /// Behind sheets: the system's grouped background, like Find My's.
+    static let night = Color(.systemGroupedBackground)
+    /// Pins: the system red.
+    static let pin = [Color(.systemRed), Color(red: 0.80, green: 0.16, blue: 0.14)]
 
     static var gradient: LinearGradient {
         LinearGradient(colors: [indigo, sky], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -36,8 +36,9 @@ enum Brand {
         LinearGradient(colors: [live, indigo, sky], startPoint: .leading, endPoint: .trailing)
     }
 
+    /// Titles: bold SF Pro, as Find My's are. (It was SF Rounded once, hence the name.)
     static func rounded(_ style: Font.TextStyle, weight: Font.Weight = .bold) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, design: .default, weight: weight)
     }
 
     /// The one spring everything moves with, so the app feels of a piece.
@@ -52,26 +53,27 @@ enum Brand {
 /// the screen is light. In dark mode, and on the sheets that are always dark,
 /// they are the brand colours as they were.
 extension Brand {
-    /// Apricot for text: about 5 to 1 or better on the light glass card.
+    /// Orange for text: the system orange is made for shapes and reads faint as small text on white, so
+    /// light mode uses a darker orange (about 5 to 1).
     static let warningText = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.92, green: 0.72, blue: 0.47, alpha: 1)
-            : UIColor(red: 0.50, green: 0.33, blue: 0.10, alpha: 1)
+            ? UIColor.systemOrange
+            : UIColor(red: 0.62, green: 0.31, blue: 0.0, alpha: 1)
     })
 
-    /// Mist blue for text.
-    static let skyText = Color(UIColor { traits in
+    /// Green for text ("Ready", "Now"): the system green is about 2 to 1 on white, so light mode uses a
+    /// darker green (about 5 to 1).
+    static let liveText = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.62, green: 0.78, blue: 0.86, alpha: 1)
-            : UIColor(red: 0.20, green: 0.38, blue: 0.47, alpha: 1)
+            ? UIColor.systemGreen
+            : UIColor(red: 0.0, green: 0.48, blue: 0.16, alpha: 1)
     })
 
-    /// Sage for text and links.
-    static let accentText = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.60, green: 0.78, blue: 0.74, alpha: 1)
-            : UIColor(red: 0.22, green: 0.39, blue: 0.37, alpha: 1)
-    })
+    /// Blue for text.
+    static let skyText = Color(.systemBlue)
+
+    /// Blue for text and links, as in Find My.
+    static let accentText = Color(.systemBlue)
 }
 
 extension View {
@@ -87,6 +89,15 @@ extension View {
         #else
         self.materialSurface(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous), tint: tint)
         #endif
+    }
+
+    /// A solid card, the way Find My's sheets group things: white on the gray background (dark gray in
+    /// dark mode), or lightly tinted for something to check. Glass is for what floats over the map.
+    func cardSurface(cornerRadius: CGFloat = 22, tint: Color? = nil) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(tint.map { AnyShapeStyle($0.opacity(0.14)) } ?? AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+        }
     }
 
     /// Capsule-shaped glass, for pills and floating controls.
@@ -151,7 +162,8 @@ extension View {
     func glassButton() -> some View {
         #if canImport(SwiftUI, _version: 7.0)
         if #available(iOS 26.0, *) {
-            self.buttonStyle(.glass).controlSize(.large)
+            // Find My's second buttons: a gray capsule with blue words.
+            self.buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
         } else {
             self.buttonStyle(GlassFallbackStyle())
         }
@@ -266,48 +278,11 @@ struct PulsingDot: View {
     }
 }
 
-/// The animated night-sky background of the intro and pairing screens:
-/// a slowly drifting mesh gradient on iOS 18+, layered glows before that.
+/// Behind the intro, setup and pairing screens: the system's grouped background, as Find My's sheets
+/// have (white in light mode, black in dark).
 struct AuroraBackground: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        // Paused with Reduce Motion on: the sky stays as it was drawn at first.
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            if #available(iOS 18.0, *) {
-                MeshGradient(width: 3, height: 3, points: Self.points(t), colors: Self.colors)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    Brand.night
-                    Circle().fill(Brand.violet.opacity(0.35)).frame(width: 420).blur(radius: 90)
-                        .offset(x: -120 + 40 * cos(t / 5), y: -260 + 30 * sin(t / 4))
-                    Circle().fill(Brand.sky.opacity(0.3)).frame(width: 380).blur(radius: 90)
-                        .offset(x: 140 + 30 * sin(t / 6), y: 220 + 40 * cos(t / 5))
-                    Circle().fill(Brand.indigo.opacity(0.4)).frame(width: 340).blur(radius: 80)
-                        .offset(x: 60 * cos(t / 7), y: 40 * sin(t / 6))
-                }
-                .ignoresSafeArea()
-            }
-        }
-    }
-
-    private static let colors: [Color] = [
-        Brand.night, Color(red: 0.16, green: 0.24, blue: 0.24), Brand.night,
-        Color(red: 0.19, green: 0.25, blue: 0.30), Color(red: 0.27, green: 0.40, blue: 0.38), Color(red: 0.26, green: 0.25, blue: 0.34),
-        Brand.night, Color(red: 0.24, green: 0.33, blue: 0.37), Color(red: 0.08, green: 0.11, blue: 0.12),
-    ]
-
-    private static func points(_ t: TimeInterval) -> [SIMD2<Float>] {
-        func wobble(_ base: Float, _ speed: Double, _ amount: Float) -> Float {
-            base + amount * Float(sin(t * speed))
-        }
-        return [
-            SIMD2(0, 0), SIMD2(0.5, 0), SIMD2(1, 0),
-            SIMD2(0, wobble(0.5, 0.31, 0.08)), SIMD2(wobble(0.5, 0.23, 0.12), wobble(0.5, 0.29, 0.1)), SIMD2(1, wobble(0.5, 0.27, 0.08)),
-            SIMD2(0, 1), SIMD2(wobble(0.5, 0.19, 0.1), 1), SIMD2(1, 1),
-        ]
+        Color(.systemGroupedBackground).ignoresSafeArea()
     }
 }
 

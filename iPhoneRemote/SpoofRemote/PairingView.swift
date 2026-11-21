@@ -50,7 +50,7 @@ struct PairingView: View {
                                 .font(.subheadline)
                                 .padding(14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .glassSurface(cornerRadius: 18, tint: Brand.warning.opacity(0.45))
+                                .cardSurface(cornerRadius: 18, tint: Brand.warning)
                                 .transition(.rise)
                         }
                         helpCard
@@ -93,7 +93,6 @@ struct PairingView: View {
                      : "This iPhone forgets the Mac. To connect again, it needs a new code.")
             }
         }
-        .environment(\.colorScheme, .dark)
         // The accent is the dark indigo of the app. On this always-dark sheet the buttons need a light one.
         .tint(Brand.sky)
         .onAppear {
@@ -125,7 +124,6 @@ struct PairingView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(.white)
         .padding(.top, 8)
     }
 
@@ -155,7 +153,7 @@ struct PairingView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .glassSurface(cornerRadius: 18, tint: Brand.warning.opacity(0.45))
+                    .cardSurface(cornerRadius: 18, tint: Brand.warning)
                     .transition(.rise)
             }
             if let server = connection.server {
@@ -177,7 +175,7 @@ struct PairingView: View {
                         Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                     }
                     .padding(14)
-                    .glassSurface(cornerRadius: 22, interactive: true)
+                    .cardSurface(cornerRadius: 22)
                 }
                 .buttonStyle(.plain)
                 .transition(.rise)
@@ -226,7 +224,7 @@ struct PairingView: View {
                 Text("Not finding it? Check that iPhone Remote is turned on at the Mac and that both are on the same Wi-Fi. "
                      + "AnyWhere also needs Local Network turned on in Settings.")
                     .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button { openSettings() } label: {
                     Label("Open Settings", systemImage: "gearshape").frame(maxWidth: .infinity)
@@ -236,7 +234,7 @@ struct PairingView: View {
             }
         }
         .padding(16)
-        .glassSurface(cornerRadius: 22)
+        .cardSurface(cornerRadius: 22)
     }
 
     /// iOS is blocking the search. Without this, it would look the same as
@@ -247,7 +245,7 @@ struct PairingView: View {
                 .font(.headline)
             Text(MacConnectionText.blockedBody)
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button { openSettings() } label: {
                 Label("Open Settings", systemImage: "gearshape").frame(maxWidth: .infinity)
@@ -256,7 +254,7 @@ struct PairingView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 22, tint: Brand.warning.opacity(0.45))
+        .cardSurface(cornerRadius: 22, tint: Brand.warning)
         .transition(.rise)
     }
 
@@ -296,7 +294,7 @@ struct PairingView: View {
             .disabled(unpairing)
         }
         .padding(16)
-        .glassSurface(cornerRadius: 24)
+        .cardSurface(cornerRadius: 24)
     }
 
     @ViewBuilder
@@ -371,7 +369,7 @@ struct PairingView: View {
                     .frame(width: 70)
             }
             .padding(16)
-            .glassSurface(cornerRadius: 20)
+            .cardSurface(cornerRadius: 20)
             if let problem = manualProblem {
                 Text(PairingInput.message(for: problem))
                     .font(.footnote)
@@ -426,8 +424,7 @@ struct PairingView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-        .foregroundStyle(.white)
+        .cardSurface(cornerRadius: 20)
     }
 
     private var successBadge: some View {
@@ -439,7 +436,7 @@ struct PairingView: View {
             Text("Paired").font(Brand.rounded(.title2))
         }
         .padding(32)
-        .glassSurface(cornerRadius: 32)
+        .cardSurface(cornerRadius: 32)
     }
 
     private func submit(mac: ConnectionManager.DiscoveredMac?) {
@@ -507,7 +504,7 @@ struct CodeField: View {
                         .font(.system(size: 28, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .frame(width: 44, height: 58)
-                        .glassSurface(cornerRadius: 14, tint: isNext ? Brand.indigo : nil)
+                        .cardSurface(cornerRadius: 14, tint: isNext ? Brand.indigo : nil)
                         .overlay {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .strokeBorder(isNext ? Brand.sky : .clear, lineWidth: 1.5)
@@ -515,7 +512,7 @@ struct CodeField: View {
                         .scaleEffect(isNext ? 1.06 : 1)
                         .contentTransition(.numericText())
                     if index == 2 {
-                        Capsule().fill(.white.opacity(0.4)).frame(width: 10, height: 3)
+                        Capsule().fill(.primary.opacity(0.3)).frame(width: 10, height: 3)
                     }
                 }
             }

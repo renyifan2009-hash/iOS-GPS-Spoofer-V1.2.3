@@ -20,7 +20,7 @@ struct IntroView: View {
                     if page < pageCount - 1 {
                         Button("Skip") { onFinish(false) }
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .glassCapsule(interactive: true)
@@ -82,8 +82,6 @@ struct IntroView: View {
                 .dynamicTypeSize(...DynamicTypeSize.accessibility2)
             }
         }
-        .environment(\.colorScheme, .dark)
-        .foregroundStyle(.white)
         .sensoryFeedback(.selection, trigger: page)
     }
 
@@ -151,7 +149,7 @@ private struct WelcomePage: View {
                     .reveal(shown, order: 4)
                 Text("Pick a place on this phone. Your Mac, or this iPhone on its own, moves its location there. Stop, and the real GPS comes straight back.")
                     .font(.body)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 30)
                     .padding(.top, 6)
@@ -184,7 +182,7 @@ private struct HowItWorksPage: View {
                     .reveal(shown, order: 1)
                 Text("iOS doesn't let an app change where the whole phone thinks it is. Your Mac can, through Apple's developer tools, the same way Xcode does. This app is its remote. With a pairing file from your Mac, this iPhone can also do it on its own.")
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
                     .reveal(shown, order: 2)
@@ -223,6 +221,7 @@ private struct ConnectPage: View {
                         .shadow(color: Brand.indigo.opacity(0.7), radius: 30, y: 10)
                     Image(systemName: "lock.shield.fill")
                         .font(.system(size: compact ? 26 : 42, weight: .semibold))
+                        .foregroundStyle(.white)
                         .symbolEffect(.bounce, value: shown)
                 }
                 .accessibilityHidden(true)
@@ -234,7 +233,7 @@ private struct ConnectPage: View {
                     .reveal(shown, order: 1)
                 Text("Pair with a one-time code. Only your paired iPhone can control the Mac, and only on your own network.")
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
                     .reveal(shown, order: 2)
@@ -242,15 +241,15 @@ private struct ConnectPage: View {
             VStack(spacing: 0) {
                 StepRow(number: 1, text: "Plug the iPhone into the Mac and tap **Trust**.")
                     .reveal(shown, order: 3)
-                Divider().overlay(.white.opacity(0.12)).padding(.leading, 56)
+                Divider().padding(.leading, 56)
                 StepRow(number: 2, text: "On the Mac, open **AnyWhere ▸ Settings ▸ iPhone Remote** and turn it on.")
                     .reveal(shown, order: 4)
-                Divider().overlay(.white.opacity(0.12)).padding(.leading, 56)
+                Divider().padding(.leading, 56)
                 StepRow(number: 3, text: "Enter the **6-digit code** the Mac shows.")
                     .reveal(shown, order: 5)
             }
             .padding(.vertical, 6)
-            .glassSurface(cornerRadius: 26)
+            .cardSurface(cornerRadius: 26)
             .padding(.horizontal, 24)
             // What comes next, before it comes: iOS asks about the local network when the
             // search for the Mac starts. And the way for people with no Mac at hand.
@@ -259,7 +258,7 @@ private struct ConnectPage: View {
                 Text("No Mac nearby? Tap Later, then choose This iPhone.")
             }
             .font(.footnote)
-            .foregroundStyle(.white.opacity(0.72))
+            .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 32)
             .reveal(shown, order: 6)
@@ -292,7 +291,7 @@ private struct HeroGlobe: View {
                 .blur(radius: 10)
             TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
                 Globe(phase: context.date.timeIntervalSinceReferenceDate * 0.25)
-                    .stroke(.white.opacity(0.16), lineWidth: 1)
+                    .stroke(.primary.opacity(0.16), lineWidth: 1)
             }
             .padding(24)
 
@@ -306,7 +305,7 @@ private struct HeroGlobe: View {
             ZStack {
                 ForEach(0..<3, id: \.self) { index in
                     Ellipse()
-                        .stroke(.white.opacity(0.5), lineWidth: 2)
+                        .stroke(Brand.sky.opacity(0.5), lineWidth: 2)
                         .frame(width: 46, height: 14)
                         .scaleEffect(ripples ? 3.2 : 0.6)
                         .opacity(ripples ? 0 : 0.8)
@@ -446,7 +445,7 @@ private struct LinkDiagram: View {
             let midY = proxy.size.height / 2
             ZStack {
                 Capsule()
-                    .fill(.white.opacity(0.14))
+                    .fill(.primary.opacity(0.12))
                     .frame(width: width - 150, height: 3)
                     .position(x: width / 2, y: midY)
                 TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
@@ -479,11 +478,12 @@ private struct LinkDiagram: View {
             VStack(spacing: 8) {
                 Image(systemName: symbol)
                     .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(.white)
                     .frame(width: 72, height: 72)
                     .glassCircle(tint: Brand.indigo)
                 Text(label)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(.secondary)
                     .fixedSize()
             }
         }
@@ -503,14 +503,14 @@ private struct FeatureRow: View {
             IconTile(symbol: symbol, colors: colors, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
-                Text(text).font(.subheadline).foregroundStyle(.white.opacity(0.7))
+                Text(text).font(.subheadline).foregroundStyle(.secondary)
             }
             // Wrap, don't cut the line short: the page scrolls if it needs the room.
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(14)
-        .glassSurface(cornerRadius: 22)
+        .cardSurface(cornerRadius: 22)
     }
 }
 
@@ -522,11 +522,12 @@ private struct StepRow: View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(number)")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
                 .frame(width: 30, height: 30)
                 .background(Brand.gradient, in: Circle())
             Text(text)
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -543,7 +544,7 @@ private struct PageDots: View {
         HStack(spacing: 7) {
             ForEach(0..<count, id: \.self) { index in
                 Capsule()
-                    .fill(index == current ? Color.white : Color.white.opacity(0.3))
+                    .fill(index == current ? Color.primary : Color.primary.opacity(0.25))
                     .frame(width: index == current ? 24 : 7, height: 7)
             }
         }
