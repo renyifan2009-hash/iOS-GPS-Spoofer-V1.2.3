@@ -93,7 +93,7 @@ struct PairingView: View {
                      : "This iPhone forgets the Mac. To connect again, it needs a new code.")
             }
         }
-        // The accent is the dark indigo of the app. On this always-dark sheet the buttons need a light one.
+        // Find My's blue for the buttons and links.
         .tint(Brand.sky)
         .onAppear {
             connection.lastError = nil

@@ -102,7 +102,7 @@ struct PhoneOnlySetupView: View {
                 if let error = phone.importError { AccessibilityNotification.Announcement(error).post() }
             }
         }
-        .tint(Brand.sky)     // the app's indigo accent is too dark on this always-dark sheet
+        .tint(Brand.sky)     // Find My's blue for the buttons and links
         .task { await phone.checkLoopback() }
         .onChange(of: scenePhase) { _, phase in
             // Back from LocalDevVPN: see whether it's on now.

@@ -46,12 +46,11 @@ enum Brand {
     static let snappy = Animation.spring(duration: 0.32, bounce: 0.18)
 }
 
-/// Colours for text. The brand's amber and sky are made to be seen as shapes:
-/// dots, tints, icons. As text on the light glass card they are about 1.5 to
-/// 1.9 to 1 against it (4.5 to 1 is the least for small text), so error and
-/// help text read as faint. These keep the same hue, a good deal darker when
-/// the screen is light. In dark mode, and on the sheets that are always dark,
-/// they are the brand colours as they were.
+/// Colours for text. The system green and orange are made to be seen as shapes:
+/// dots, tints, icons. As small text on white they are about 2 to 1 (4.5 to 1 is
+/// the least for small text), so status and help text would read as faint. These
+/// keep the same hue, a good deal darker when the screen is light, and are the
+/// system colours themselves in dark mode.
 extension Brand {
     /// Orange for text: the system orange is made for shapes and reads faint as small text on white, so
     /// light mode uses a darker orange (about 5 to 1).
