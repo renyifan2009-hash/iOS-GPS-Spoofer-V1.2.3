@@ -22,6 +22,9 @@ struct SettingsView: View {
     @State private var enteringKey = false
     @State private var key = ""
 
+    /// Checked each time Settings opens (`canOpenURL`, with "sidestore" in LSApplicationQueriesSchemes).
+    @State private var sideStoreInstalled = SideStore.isInstalled
+
     private var busy: Bool { phone.isSpoofing || phone.isWorking || connection.isSpoofing || connection.isWorking }
 
     var body: some View {
@@ -102,13 +105,20 @@ struct SettingsView: View {
                         Label(summary, systemImage: SigningStatus.isEndingSoon ? "exclamationmark.circle" : "checkmark.seal")
                             .foregroundStyle(SigningStatus.isEndingSoon ? Brand.warningText : Color.primary)
                     }
-                    Button { SideStore.addSource() } label: { row("plus.app", "Add AnyWhere to SideStore") }
-                    Button { SideStore.open() } label: { row("arrow.clockwise.circle", "Refresh in SideStore") }
-                    Button { SideStore.requestPairingFile() } label: { row("doc.badge.arrow.up", "Get Pairing File from SideStore") }
+                    // Only with SideStore on this iPhone: without it, each of these just opened its website.
+                    if sideStoreInstalled {
+                        Button { SideStore.addSource() } label: { row("plus.app", "Add AnyWhere to SideStore") }
+                        Button { SideStore.open() } label: { row("arrow.clockwise.circle", "Refresh in SideStore") }
+                        Button { SideStore.requestPairingFile() } label: { row("doc.badge.arrow.up", "Get Pairing File from SideStore") }
+                    } else {
+                        Link(destination: SideStore.website) { row("arrow.down.app", "Get SideStore") }
+                    }
                 } header: {
                     Text("Updates & 7-day signing")
                 } footer: {
-                    Text("Install AnyWhere through SideStore and it refreshes on this iPhone, with no computer: SideStore renews it in the background, and a daily Shortcuts automation (Automation ▸ Time of Day ▸ SideStore “Refresh All Apps”) makes sure. New versions show up there too.")
+                    Text(sideStoreInstalled
+                         ? "SideStore refreshes AnyWhere on this iPhone, with no computer: it renews it in the background, and a daily Shortcuts automation (Automation ▸ Time of Day ▸ SideStore “Refresh All Apps”) makes sure. New versions show up there too. Get Pairing File only works if SideStore has a pairing file of its own; if it says it can't find one, use Get from My Mac in This iPhone ▸ Set Up."
+                         : "SideStore isn't on this iPhone, so refresh AnyWhere the way you installed it. With SideStore it refreshes on this iPhone, with no computer, and new versions show up there.")
                 }
 
                 Section {

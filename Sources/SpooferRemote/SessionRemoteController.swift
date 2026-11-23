@@ -50,6 +50,9 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
     }
 
     public var onLog: (@Sendable (LogLevel, String) -> Void)?
+    /// Asks whether to send an iPhone its pairing file: (the iPhone asking, the iPhone plugged in that the
+    /// file is made for, the code both should show). nil: there is no one to ask, so it isn't sent.
+    public var approvePairingFile: (@Sendable (_ clientName: String, _ deviceName: String, _ code: String) async -> Bool)?
 
     private let pmd: Pymobiledevice3
     private let options: Options
@@ -111,6 +114,36 @@ public final class SessionRemoteController: RemoteController, @unchecked Sendabl
     }
 
     // MARK: - RemoteController
+
+    public func pairingFile(forClientNamed clientName: String, code: String) async throws -> PairingFilePayload {
+        guard let approve = approvePairingFile else {
+            throw RemoteControlError("The helper is running in the background, where no one can allow it. On the Mac, "
+                                     + "run iosgpsspoof serve in Terminal, or use the AnyWhere Mac app.", status: 501)
+        }
+        let pmd = self.pmd
+        let options = self.options
+        let device: Device
+        do {
+            device = try await Task.detached { try pmd.selectDevice(udid: options.udid, connection: options.connection) }.value
+        } catch {
+            throw RemoteControlError("No iPhone is plugged into the Mac. Plug this iPhone in with a cable, unlock it and "
+                                     + "tap Trust, then try again.")
+        }
+        guard device.isTrusted else {
+            throw RemoteControlError("Unlock the iPhone and tap Trust when it asks “Trust This Computer?”, then try again.")
+        }
+        guard await approve(clientName, device.deviceName, code) else {
+            throw RemoteControlError("The Mac didn't allow it.", status: 403)
+        }
+        log(.info, "making the pairing file for \(device.deviceName)…")
+        do {
+            let made = try await Task.detached { try pmd.pairingFileData(udid: device.udid) }.value
+            log(.info, "sent “\(clientName)” the pairing file for \(device.deviceName)")
+            return PairingFilePayload(data: made.data, olderIOSOnly: made.remotePairingProblem)
+        } catch {
+            throw RemoteControlError("The Mac couldn't make the pairing file: \(SpoofSession.firstLine(of: error))")
+        }
+    }
 
     public func status() async -> RemoteStatus {
         await onQueue { self.makeStatus() }

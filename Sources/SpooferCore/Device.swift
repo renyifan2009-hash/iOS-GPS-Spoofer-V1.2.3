@@ -255,6 +255,19 @@ extension Pymobiledevice3 {
         return PairingExport(url: url, remotePairingProblem: problem)
     }
 
+    /// The iPhone's pairing file as data, for sending straight to the iPhone that asked for it
+    /// (`POST /pairingfile`). Made by `exportPairingFile` in a folder only this user can open, which
+    /// is removed again before this returns. The second value is `PairingExport.remotePairingProblem`.
+    public func pairingFileData(udid: String) throws -> (data: Data, remotePairingProblem: String?) {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("anywhere-send-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("pairing.\(PairingFileLocation.fileExtension)")
+        let export = try exportPairingFile(udid: udid, to: file)
+        return (try Data(contentsOf: file), export.remotePairingProblem)
+    }
+
     /// Pairs this Mac with the iPhone's remotepairingd over USB lockdown (no
     /// Trust prompt, since USB is already trusted) and returns the identity.
     /// Re-uses pymobiledevice3's record if this Mac already paired. The work

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import Network
 import Observation
@@ -558,6 +559,88 @@ final class ConnectionManager {
             return false
         }
     }
+
+    // MARK: - The pairing file
+
+    /// Ask the paired Mac for this iPhone's pairing file, so it needn't be AirDropped. The steps are in
+    /// `PairingFileExchange.swift`: a commitment first, then the Mac's key and nonce, then the reveal, after
+    /// which `onCode` gets the code to show (the Mac shows the same one beside Allow). The reveal is sent
+    /// again every 2 seconds until the person at the Mac answers (up to 2½ minutes). Returns the file and,
+    /// when it lacks the part newer iOS versions need, why.
+    func requestPairingFile(onCode: (String) -> Void) async throws -> (data: Data, olderIOSOnly: String?) {
+        guard server != nil else { throw ClientError.notPaired }
+        let key = Curve25519.KeyAgreement.PrivateKey()
+        let publicKey = key.publicKey.rawRepresentation
+        let nonce = PairingFileSeal.makeNonce()
+        let commitment = PairingFileSeal.commitment(publicKey: publicKey, nonce: nonce)
+
+        // 1–2: the commitment, and the Mac's key and nonce back.
+        let opened = try await pairingFileStep(PairingFileRequest(commitment: commitment), answeredOnce: false)
+        try Self.throwIfDone(opened)
+        guard let serverKey = opened.serverPublicKey, let serverNonce = opened.serverNonce else {
+            throw ClientError.message("The Mac sent an empty answer. Try again.")
+        }
+        onCode(PairingFileSeal.code(clientPublicKey: publicKey, clientNonce: nonce,
+                                    serverPublicKey: serverKey, serverNonce: serverNonce))
+
+        // 3–4: the reveal, until there's an answer.
+        let reveal = PairingFileRequest(commitment: commitment, publicKey: publicKey, nonce: nonce)
+        let deadline = Date().addingTimeInterval(150)
+        while true {
+            let answer = try await pairingFileStep(reveal, answeredOnce: true, until: deadline)
+            // The Mac's key can't change halfway: that would be someone else answering.
+            if let shown = answer.serverPublicKey, shown != serverKey {
+                throw ClientError.message("The answer didn't come from the Mac that started. Try again.")
+            }
+            if answer.state == .ready {
+                guard let sealed = answer.sealed else { throw ClientError.message("The Mac sent an empty answer. Try again.") }
+                do {
+                    return (try PairingFileSeal.open(sealed, serverPublicKey: serverKey, with: key), answer.olderIOSOnly)
+                } catch {
+                    throw ClientError.message("\(error)")
+                }
+            }
+            try Self.throwIfDone(answer)
+            guard Date() < deadline else {
+                throw ClientError.message("No answer from the Mac. Tap Get from My Mac again and click Allow on the Mac.")
+            }
+            try await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    /// A no, or a failure, as the message to show.
+    private static func throwIfDone(_ answer: PairingFileResponse) throws {
+        switch answer.state {
+        case .denied: throw ClientError.message(answer.message ?? "The Mac didn't allow it.")
+        case .failed: throw ClientError.message(answer.message ?? "The Mac couldn't make the pairing file.")
+        case .waiting, .ready: return
+        }
+    }
+
+    /// One `POST /pairingfile`. Once the Mac has answered, a moment off the Wi‑Fi is waited out instead of failing.
+    private func pairingFileStep(_ request: PairingFileRequest, answeredOnce: Bool,
+                                 until deadline: Date = .distantFuture) async throws -> PairingFileResponse {
+        let body = try RemoteAPI.makeEncoder().encode(request)
+        while true {
+            try Task.checkCancellation()
+            do {
+                let data = try await send("POST", RemoteAPI.Path.pairingFile, body: body, timeout: 10)
+                return try RemoteAPI.makeDecoder().decode(PairingFileResponse.self, from: data)
+            } catch ClientError.http(404, _) {
+                throw ClientError.message(Self.macTooOldForPairingFile)
+            } catch ClientError.http(401, let message) {
+                dropPairing(because: message)
+                throw ClientError.message(message)
+            } catch let error as URLError where answeredOnce && error.code != .cancelled && Date() < deadline {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                throw ClientError.message(Self.describe(error))
+            }
+        }
+    }
+
+    static let macTooOldForPairingFile = "This Mac's AnyWhere is too old to send the pairing file. Update AnyWhere on the Mac to 2.6.7 or later, then try again."
 
     // MARK: - HTTP
 

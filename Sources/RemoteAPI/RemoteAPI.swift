@@ -19,13 +19,16 @@ import Foundation
 ///     POST /autostop   AutoStopRequest → RemoteStatus     (stop by itself after N minutes)
 ///     POST /stop       → RemoteStatus                     (restores the real GPS)
 ///     POST /unpair     → RemoteStatus                     (revokes this token)
+///     POST /pairingfile PairingFileRequest → PairingFileResponse (this iPhone's pairing file, sealed
+///                                                         to its key, once the Mac's user allows it)
 ///
 /// Errors come back as a non-2xx status with an `APIError` body.
 public enum RemoteAPI {
     /// 2: a wait on a route's first stop holds the start before leaving, and `/status` can carry `routeWait`.
     /// 3: a route can carry its roads (`RouteRequest.legs`, so `/route` takes bodies up to
     /// `maxRouteBodyBytes`) and ask to drive at each road's speed limit (`followSpeedLimits`).
-    public static let version = 3
+    /// 4: the iPhone can ask for its own pairing file (`POST /pairingfile`, see `PairingFileSeal`).
+    public static let version = 4
     /// Bonjour service type the Mac advertises and the iPhone browses for.
     public static let serviceType = "_iosgpsspoof._tcp"
     public static let defaultPort: UInt16 = 47_653
@@ -43,6 +46,7 @@ public enum RemoteAPI {
         public static let pause = "/pause"
         public static let autoStop = "/autostop"
         public static let stop = "/stop"
+        public static let pairingFile = "/pairingfile"
     }
 
     /// Keys of the Bonjour TXT record.

@@ -26,7 +26,7 @@ final class RoadRouteTests: XCTestCase {
         let request = RouteRequest(waypoints: [a, b, c], followRoads: true, travelMode: "driving", speed: 12,
                                    legs: [detour, nil], followSpeedLimits: true)
         XCTAssertEqual(try roundTrip(request), request)
-        XCTAssertEqual(RemoteAPI.version, 3)
+        XCTAssertGreaterThanOrEqual(RemoteAPI.version, 3)
     }
 
     /// An older iPhone sends neither: the Mac drives as before.

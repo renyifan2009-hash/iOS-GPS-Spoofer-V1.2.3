@@ -94,6 +94,13 @@ struct Serve: ParsableCommand {
             log(line)
         }
         controller.startMonitoring()
+        // An iPhone asking for its pairing file is asked about here, when there is a terminal (or a pipe) to
+        // answer from. Run as a LaunchAgent, stdin is /dev/null: no one to ask, so it isn't offered.
+        if Serve.canAskOnStandardInput {
+            controller.approvePairingFile = { client, device, code in
+                await Serve.askInTerminal(client: client, device: device, code: code)
+            }
+        }
 
         let listenPort = UInt16(port)
         let server = MacRemoteServer(name: serverName, port: listenPort, controller: controller, pairing: pairing)
@@ -125,6 +132,28 @@ struct Serve: ParsableCommand {
         }
         withExtendedLifetime(watcher) {
             dispatchMain()
+        }
+    }
+
+    static var canAskOnStandardInput: Bool {
+        var info = stat()
+        guard fstat(STDIN_FILENO, &info) == 0 else { return false }
+        return isatty(STDIN_FILENO) != 0 || (info.st_mode & S_IFMT) == S_IFIFO
+    }
+
+    /// Allowed only by typing the code the iPhone shows (so `yes | iosgpsspoof serve`, or a "y" left over in
+    /// the terminal, can't allow anything). Anything else, the end of input, or no answer in 100 seconds is no.
+    static func askInTerminal(client: String, device: String, code: String) async -> Bool {
+        let digits = code.filter(\.isNumber)
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let answer = TerminalAnswers.shared.ask("""
+
+                    “\(client)” asks for its pairing file. It will be made for \(device), plugged into this Mac.
+                    To allow it, type the 6-digit code the iPhone shows, then Return. Anything else says no: 
+                    """, timeout: 100)
+                continuation.resume(returning: answer?.filter(\.isNumber) == digits)
+            }
         }
     }
 
@@ -239,5 +268,51 @@ enum LaunchAgent {
     @discardableResult
     private static func launchctl(_ arguments: [String]) throws -> ProcessResult {
         try ProcessRunner.run(URL(fileURLWithPath: "/bin/launchctl"), arguments: arguments, timeout: 20)
+    }
+}
+
+/// Lines typed in the terminal, read by one thread for as long as the helper runs. A question only takes
+/// a line typed after it was asked, so an answer can't be left waiting for the next question, and one
+/// that times out leaves nothing behind to swallow the next answer.
+final class TerminalAnswers: @unchecked Sendable {
+    static let shared = TerminalAnswers()
+
+    private let lock = NSLock()
+    private let arrived = DispatchSemaphore(value: 0)
+    private var lines: [String] = []
+    private var ended = false
+    private var reading = false
+
+    /// Print `question`, then wait up to `timeout` seconds for the next line. nil: no answer, or no more input.
+    func ask(_ question: String, timeout: TimeInterval) -> String? {
+        lock.withLock {
+            lines.removeAll()
+            if !reading {
+                reading = true
+                Thread.detachNewThread { [self] in
+                    while let line = readLine() {
+                        lock.withLock { lines.append(line) }
+                        arrived.signal()
+                    }
+                    lock.withLock { ended = true }
+                    arrived.signal()
+                }
+            }
+        }
+        print(question, terminator: "")
+        fflush(stdout)
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            let next: String?? = lock.withLock {
+                if !lines.isEmpty { return .some(lines.removeFirst()) }
+                return ended ? .some(nil) : nil
+            }
+            if let next { return next }
+            let left = deadline.timeIntervalSinceNow
+            guard left > 0, arrived.wait(timeout: .now() + left) == .success else {
+                print("\n(no answer: not sent)")
+                return nil
+            }
+        }
     }
 }

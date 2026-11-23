@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import RemoteAPI
@@ -214,6 +215,60 @@ final class AppRemoteBridge: RemoteController {
     func stop() async -> RemoteStatus {
         AppModel.shared.stop()
         return Self.makeStatus(AppModel.shared)
+    }
+
+    /// The iPhone's own pairing file, so it needn't be AirDropped: asked about first, then made for the
+    /// iPhone plugged in, exactly as File ▸ Pairing File for the iPhone App… makes it.
+    func pairingFile(forClientNamed clientName: String, code: String) async throws -> PairingFilePayload {
+        let model = AppModel.shared
+        let readiness = model.pairingReadiness
+        guard readiness.isReady, let pmd = model.pmd, let device = model.selectedDevice else {
+            throw RemoteControlError("\(readiness.title). \(readiness.instruction)")
+        }
+        guard Self.askToSend(clientName: clientName, deviceName: device.deviceName, code: code) else {
+            model.appendLog("Didn't send \(clientName) a pairing file.", level: .info)
+            throw RemoteControlError("The Mac didn't allow it.", status: 403)
+        }
+        model.appendLog("Making the pairing file for \(device.deviceName), for \(clientName)…", level: .info)
+        let udid = device.udid
+        do {
+            let made = try await Task.detached(priority: .userInitiated) { try pmd.pairingFileData(udid: udid) }.value
+            model.appendLog("Sent \(clientName) its pairing file.", level: .success)
+            return PairingFilePayload(data: made.data, olderIOSOnly: made.remotePairingProblem)
+        } catch {
+            let reason = SpoofSession.firstLine(of: error)
+            model.appendLog("Couldn't make the pairing file: \(reason)", level: .error)
+            throw RemoteControlError("The Mac couldn't make the pairing file: \(reason)")
+        }
+    }
+
+    /// How long the question waits for an answer before it counts as a no (the iPhone gives up a little later).
+    static let questionTimeout: TimeInterval = 100
+
+    /// Don't Allow or Allow. The person is usually in another app when the iPhone asks, and macOS no longer
+    /// lets an app push itself in front: so the Dock icon bounces until they look, and the alert floats over
+    /// other apps' windows instead of waiting behind them. Don't Allow is the default, so a Return typed
+    /// just as it appears says no; Allow takes a click. Left unanswered, it closes by itself as a no.
+    private static func askToSend(clientName: String, deviceName: String, code: String) -> Bool {
+        NSApp.requestUserAttention(.criticalRequest)
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Send “\(clientName)” its pairing file?"
+        alert.informativeText = "AnyWhere will make the pairing file for \(deviceName), plugged into this Mac, and send it "
+            + "to that iPhone so it can change its location on its own.\n\nAllow only if the iPhone shows the code \(code)."
+        alert.addButton(withTitle: "Don’t Allow")
+        let allow = alert.addButton(withTitle: "Allow")
+        allow.keyEquivalent = ""
+        alert.window.level = .floating
+        let window = alert.window
+        let timer = Timer(timeInterval: questionTimeout, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                if NSApp.modalWindow === window { NSApp.stopModal(withCode: .alertFirstButtonReturn) }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        defer { timer.invalidate() }
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     /// The checks every start has in common, with the messages the iPhone shows.
