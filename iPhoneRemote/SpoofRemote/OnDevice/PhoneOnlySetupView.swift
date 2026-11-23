@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 /// do the rest. Each step gets a tick once it's ready.
 struct PhoneOnlySetupView: View {
     @Environment(OnDeviceController.self) private var phone
+    @Environment(ConnectionManager.self) private var connection
     @Environment(UpdateChecker.self) private var updates
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -14,6 +15,15 @@ struct PhoneOnlySetupView: View {
     @State private var importingImage = false
     @State private var imagePickerError: String?
     @State private var pairingHere = false
+    /// Asking the Mac for the pairing file: the code both screens show, while it waits.
+    @State private var macCode: String?
+    @State private var macRequest: Task<Void, Never>?
+    @State private var macError: String?
+    /// Added, with something to know: it lacks the part newer iOS versions need.
+    @State private var macNote: String?
+    /// Pairing with the Mac first, then asking it for the file.
+    @State private var pairingMac = false
+    @State private var fileAfterPairing = false
 
     /// LocalDevVPN on the App Store (the link its GitHub README gives).
     static let localDevVPN = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
@@ -81,10 +91,17 @@ struct PhoneOnlySetupView: View {
                 }
             }
             .sheet(isPresented: $pairingHere) { PhonePairingView() }
+            .sheet(isPresented: $pairingMac, onDismiss: {
+                // Paired just now: carry on and ask it for the file.
+                let carryOn = fileAfterPairing && connection.isPaired
+                fileAfterPairing = false
+                if carryOn { getFromMac() }
+            }) { PairingView() }
+            .onDisappear { macRequest?.cancel() }
             .confirmationDialog("Remove the pairing file?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Remove", role: .destructive) { phone.removePairingFile() }
             } message: {
-                Text("This iPhone goes back to its real location. To use this mode again, open a new pairing file from your Mac.")
+                Text("This iPhone goes back to its real location. To use this mode again, add a pairing file: " + (PhonePairing.isAvailable ? "Get from My Mac, Choose File or Pair Here." : "Get from My Mac or Choose File."))
             }
             .fileImporter(isPresented: $importingImage, allowedContentTypes: [.folder]) { result in
                 switch result {
@@ -169,6 +186,23 @@ struct PhoneOnlySetupView: View {
                     HStack(spacing: 8) { pairingButtons(tooOld: tooOld) }
                     VStack(alignment: .leading, spacing: 8) { pairingButtons(tooOld: tooOld) }
                 }
+                if let code = macCode {
+                    macWaiting(code: code)
+                        .transition(.rise)
+                }
+                if let error = macError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(Brand.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.rise)
+                } else if let note = macNote {
+                    Label(note, systemImage: "info.circle")
+                        .font(.footnote)
+                        .foregroundStyle(Brand.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.rise)
+                }
                 if let error = phone.importError {
                     // Right under the button that caused it, not at the bottom of the screen.
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -190,10 +224,10 @@ struct PhoneOnlySetupView: View {
         let here = PhonePairing.isAvailable
             ? " Or tap Pair Here to make one on this iPhone, with no computer." : ""
         if !phone.isSetUp {
-            return "On your Mac, plug this iPhone in and open AnyWhere. Choose File ▸ Pairing File for the iPhone App…, click Create Pairing File, then Send with AirDrop. Here, tap Accept and pick AnyWhere. If you saved it to Files instead, tap Choose File below and pick it from Downloads." + here
+            return "Plug this iPhone into your Mac with a cable, open AnyWhere on the Mac, and tap Get from My Mac. Click Allow on the Mac and the file comes straight here. (The first time, it asks you to pair with the Mac.) If you already have the file in Files, tap Choose File." + here
         }
         if tooOld {
-            return "This pairing file can't be used on this iPhone's iOS. On your Mac, plug this iPhone in by cable, unlock it, and choose File ▸ Pairing File for the iPhone App… again. Then AirDrop it here. If it still fails, update AnyWhere on the Mac first." + here
+            return "This pairing file can't be used on this iPhone's iOS. Plug this iPhone into your Mac with a cable, unlock it, and tap Get from My Mac for a new one. If it still fails, update AnyWhere on the Mac first." + here
         }
         let held = "It's in this iPhone's Keychain. It lets this app talk to the iPhone like your Mac does."
         // Which file it is, so a file left from before a reinstall isn't a mystery.
@@ -215,6 +249,14 @@ struct PhoneOnlySetupView: View {
         }
         if !phone.isSetUp || tooOld {
             Button {
+                getFromMac()
+            } label: {
+                Label("Get from My Mac", systemImage: "laptopcomputer.and.arrow.down")
+                    .fixedSize()
+            }
+            .prominentButton()
+            .disabled(macRequest != nil)
+            Button {
                 phone.clearImportError()
                 importing = true
             } label: {
@@ -226,6 +268,60 @@ struct PhoneOnlySetupView: View {
         if phone.isSetUp {
             Button("Remove", role: .destructive) { confirmRemove = true }
                 .glassButton()
+        }
+    }
+
+    /// Waiting for the Mac: the code to compare, and a way out.
+    private func macWaiting(code: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProgressView()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Click Allow on your Mac")
+                    .font(.subheadline.weight(.semibold))
+                Text("Only if it shows the code")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text(code)
+                    .font(.title2.weight(.bold).monospacedDigit())
+                    .accessibilityLabel(code.map { String($0) }.joined(separator: " "))
+            }
+            Spacer(minLength: 8)
+            Button("Cancel") { macRequest?.cancel() }
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(12)
+        .cardSurface(cornerRadius: 16, tint: Brand.sky)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Ask the Mac for this iPhone's pairing file; pair with it first if they never have.
+    private func getFromMac() {
+        phone.clearImportError()
+        macError = nil
+        macNote = nil
+        guard connection.isPaired else {
+            fileAfterPairing = true
+            pairingMac = true
+            return
+        }
+        macRequest = Task {
+            defer {
+                macRequest = nil
+                withAnimation(Brand.spring) { macCode = nil }
+            }
+            do {
+                let file = try await connection.requestPairingFile { code in
+                    withAnimation(Brand.spring) { macCode = code }
+                }
+                let mac = connection.server?.name ?? "your Mac"
+                if phone.importPairingFile(data: file.data, fromMac: mac), let reason = file.olderIOSOnly {
+                    macNote = "Added. It's missing the part newer iOS versions need, so it may only work on older iOS: \(reason)"
+                }
+            } catch is CancellationError {
+                // Cancel, or the screen closed.
+            } catch {
+                withAnimation(Brand.spring) { macError = error.localizedDescription }
+            }
         }
     }
 

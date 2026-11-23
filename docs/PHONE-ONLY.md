@@ -7,7 +7,11 @@ These standalone additions shipped in 2.6.0, with the iPhone app 1.3 (build 6). 
 ## Set up once
 
 1. Install/sign the iPhone app, enable Developer Mode and allow Local Network access.
-2. On the Mac, plug in and trust this iPhone. Choose **File ▸ Pairing File for the iPhone App…**. Import the file on that iPhone. Remote Pairing requires the file's Remote Pairing identity; a lockdown-only file cannot use that path. Export eligibility on iOS 17 does not guarantee that Remote Pairing export succeeds there.
+2. On the Mac, plug in and trust this iPhone. Then either:
+   - on the iPhone, in **This iPhone ▸ Set Up**, tap **Get from My Mac** (AnyWhere 2.6.7 or later on the Mac, with **Settings ▸ iPhone Remote** on; the first time, pair with the Mac's code). The Mac asks **Don't Allow** / **Allow** and shows a 6-digit code, which the iPhone shows too; allow only if they match. The code is made from one-time keys and nonces from both sides, with the iPhone committing to its own first, so someone in the middle of the Wi‑Fi can't make the two screens agree. On Allow, the Mac makes the file for the iPhone that is plugged in and sends it sealed to the iPhone's one-time key (X25519, HKDF-SHA256, ChaCha20-Poly1305). An iPhone that was turned down waits 30 seconds before it can ask again. `iosgpsspoof serve` asks in Terminal, where you type the code to allow it; run as a LaunchAgent, with no one to ask, it doesn't send files;
+   - or choose **File ▸ Pairing File for the iPhone App…** on the Mac and import the file on that iPhone (AirDrop, or Choose File).
+
+   Remote Pairing requires the file's Remote Pairing identity; a lockdown-only file cannot use that path. Export eligibility on iOS 17 does not guarantee that Remote Pairing export succeeds there.
 3. Install [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044), open it and tap Connect. It routes the phone's developer traffic back to itself; no runtime Mac server is involved in **This iPhone** mode.
 4. Allow location permission for AnyWhere's background activity session.
 5. For use after a phone restart, copy a matching **extracted Apple developer-image folder** to Files on the iPhone. In **This iPhone ▸ Set Up ▸ Choose Developer Image Folder**, select the directory containing `BuildManifest.plist` and its payloads. See [the device test guide](PHONE-STANDALONE-TESTING.md) for personalized and Cryptex bundles.

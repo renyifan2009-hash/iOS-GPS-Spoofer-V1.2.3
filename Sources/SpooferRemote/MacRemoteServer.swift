@@ -23,6 +23,22 @@ public protocol RemoteController: AnyObject, Sendable {
     func setPaused(_ request: PauseRequest) async throws -> RemoteStatus
     /// Put the real location back by itself after N minutes (0 turns it off).
     func setAutoStop(_ request: AutoStopRequest) async throws -> RemoteStatus
+    /// The iPhone called `clientName` asks for its own pairing file. Ask the person at the Mac first,
+    /// showing `code` (the iPhone shows it too), then make the file for the iPhone that is plugged in.
+    /// Throws a `RemoteControlError` when they say no (403) or it can't be made.
+    func pairingFile(forClientNamed clientName: String, code: String) async throws -> PairingFilePayload
+}
+
+/// A pairing file the Mac made for the iPhone that asked.
+public struct PairingFilePayload: Sendable {
+    public var data: Data
+    /// Why the file has no Remote Pairing identity, or nil when it has one.
+    public var olderIOSOnly: String?
+
+    public init(data: Data, olderIOSOnly: String? = nil) {
+        self.data = data
+        self.olderIOSOnly = olderIOSOnly
+    }
 }
 
 public extension RemoteController {
@@ -41,6 +57,11 @@ public extension RemoteController {
 
     func setAutoStop(_ request: AutoStopRequest) async throws -> RemoteStatus {
         throw RemoteControlError("Stopping by itself isn't supported here.", status: 501)
+    }
+
+    func pairingFile(forClientNamed clientName: String, code: String) async throws -> PairingFilePayload {
+        throw RemoteControlError("This Mac can't send pairing files this way. On the Mac, open AnyWhere and choose "
+                                 + "File ▸ Pairing File for the iPhone App….", status: 501)
     }
 }
 
@@ -77,6 +98,7 @@ public final class MacRemoteServer: @unchecked Sendable {
 
     private let controller: RemoteController
     private let pairing: PairingManager
+    private let pairingFiles = PairingFileDesk()
     private let queue = DispatchQueue(label: "MacRemoteServer", qos: .userInitiated)
     // Confined to `queue`.
     private var listener: NWListener?
@@ -167,7 +189,7 @@ public final class MacRemoteServer: @unchecked Sendable {
     private static let knownPaths: Set<String> = [
         RemoteAPI.Path.info, RemoteAPI.Path.pair, RemoteAPI.Path.unpair, RemoteAPI.Path.status,
         RemoteAPI.Path.location, RemoteAPI.Path.start, RemoteAPI.Path.route, RemoteAPI.Path.stop,
-        RemoteAPI.Path.joystick, RemoteAPI.Path.pause, RemoteAPI.Path.autoStop,
+        RemoteAPI.Path.joystick, RemoteAPI.Path.pause, RemoteAPI.Path.autoStop, RemoteAPI.Path.pairingFile,
     ]
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -233,6 +255,14 @@ public final class MacRemoteServer: @unchecked Sendable {
                 let status = await controller.stop()
                 command("stopped and restored the real location", client)
                 return .json(status)
+            case ("POST", RemoteAPI.Path.pairingFile):
+                let ask = try Self.body(PairingFileRequest.self, from: request.body, hint: "a commitment")
+                guard ask.isValid else { throw RemoteControlError("That request isn't valid.", status: 400) }
+                let (answer, startedCode) = await pairingFiles.answer(ask, from: client, controller: controller)
+                if let startedCode {
+                    log("“\(PairingFileDesk.printable(client.name))” asked for its pairing file (code \(startedCode))")
+                }
+                return .json(answer)
             case ("POST", RemoteAPI.Path.unpair):
                 pairing.revoke(token: token)
                 command("unpaired", client)

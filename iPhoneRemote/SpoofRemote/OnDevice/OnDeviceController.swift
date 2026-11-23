@@ -176,6 +176,38 @@ final class OnDeviceController {
         return true
     }
 
+    /// A pairing file the Mac sent straight to this app (`ConnectionManager.requestPairingFile`). It goes
+    /// through the same checks and into the Keychain like one from Files; the copy written for that is
+    /// removed again.
+    @discardableResult
+    func importPairingFile(data: Data, fromMac macName: String) -> Bool {
+        Self.sweepCopiesFromMac()
+        let folder = FileManager.default.temporaryDirectory.appending(path: "\(Self.fromMacPrefix)\(UUID().uuidString)")
+        let file = folder.appending(path: "From \(macName).\(PairingFileSource.fileExtension)")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: file, options: .completeFileProtection)
+        } catch {
+            failImport("Couldn't keep the pairing file from the Mac. Try again.")
+            return false
+        }
+        defer { try? FileManager.default.removeItem(at: folder) }
+        return importPairingFile(from: file)
+    }
+
+    nonisolated private static let fromMacPrefix = "from-mac-"
+
+    /// Copies left by `importPairingFile(data:fromMac:)` when the app was stopped halfway: they hold the
+    /// same private keys as the Keychain's copy, in plain view. Swept before each import and when the app
+    /// goes to the background.
+    nonisolated static func sweepCopiesFromMac() {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory
+        for name in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? [] where name.hasPrefix(fromMacPrefix) {
+            try? fm.removeItem(at: tmp.appending(path: name))
+        }
+    }
+
     /// The file picker failed before there was a file to read.
     func reportImportFailure(_ error: Error) {
         // Closing the picker without choosing is not a failure.
@@ -211,6 +243,7 @@ final class OnDeviceController {
     /// launch: a file opened from AirDrop arrives at launch, and is still
     /// being read.
     func sweepInbox() {
+        Self.sweepCopiesFromMac()
         guard isSetUp, importError == nil else { return }
         Self.discardInboxCopies()
     }
