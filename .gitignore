@@ -15,3 +15,4 @@ iPhoneRemote/Vendor/
 # Payment server dependencies
 payments/node_modules/
 .taste-skill/
+.vercel
