@@ -24,7 +24,7 @@ Select **This iPhone** in the bottom card:
 
 - **Teleport:** choose a position, Start Here, Move Here or Stop.
 - **Joystick:** choose a starting position, Start Joystick, select a pace and hold the pad. Releasing the pad, losing input for 1.5 seconds or leaving the active app stops movement. The location remains held until Stop.
-- **Route:** add two or more stops, set speed/waits and choose once, loop or ping-pong. With Follow roads, this iPhone requests MapKit directions. A failed directions request reports an error; it does not silently substitute a straight line. Without Follow roads, travel is direct. This phone backend uses the selected speed; the Mac's realistic traffic-light/OSM engine is separate.
+- **Route:** add two or more stops, set speed/waits and choose once, loop or ping-pong. With Follow roads, this iPhone requests MapKit directions. A failed directions request reports an error; it does not silently substitute a straight line. Without Follow roads, travel is direct. Driving with Follow roads and realistic movement on, it drives each road at about its speed limit (OpenStreetMap, or Apple Maps' typical speed for the leg where none is known), eases off for corners and before stops, and now and then waits at a corner for a red light (12–50 s) or a stop sign (`NaturalDrive`). The Mac's engine instead places lights and signs at their real OpenStreetMap positions along the route.
 - **Pause/Resume:** pauses route time as well as movement.
 - **Automatic stop:** the phone checks a deadline while executing. iOS suspension/termination can delay or prevent the timer; verify the actual position in Maps.
 
